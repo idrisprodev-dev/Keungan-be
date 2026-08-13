@@ -1,0 +1,90 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------
+// 1. MODEL PENGGUNA
+// ------------------------------------------------------
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  image         String?
+  spreadsheetId String?
+  plan          PlanType  @default(TRIAL)
+  trialEndsAt   DateTime?
+  createdAt     DateTime  @default(now())
+  googleAccessToken String?
+  categories    Category[]
+  transactions  Transaction[]
+  goals         Goal[]
+}
+
+enum PlanType {
+  TRIAL
+  PRO
+  PLATINUM
+}
+
+// ------------------------------------------------------
+// 2. MODEL KEUANGAN
+// ------------------------------------------------------
+model Category {
+  id          String        @id @default(cuid())
+  name        String
+  type        CategoryType
+
+  // Atribut UI Baru
+  icon        String?       // Menyimpan nama ikon Lucide (misal: 'Coffee', 'Car')
+  color       String?       // Menyimpan kode warna Hex (misal: '#00E5FF')
+  // Sistem Kontrol
+  isDefault   Boolean       @default(false) // True = bawaan sistem (tidak bisa dihapus), False = buatan user
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  transactions Transaction[]
+  createdAt   DateTime      @default(now())
+}
+
+enum CategoryType {
+  INCOME
+  EXPENSE
+}
+
+model Transaction {
+  id          String    @id @default(cuid())
+  amount      Float
+  description String?
+  date        DateTime  @default(now())
+  type        CategoryType
+  
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  categoryId  String
+  category    Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime  @default(now())
+}
+
+// ------------------------------------------------------
+// 3. MODEL TABUNGAN (Untuk Paket Pro & Platinum)
+// ------------------------------------------------------
+model Goal {
+  id            String    @id @default(cuid())
+  name          String    
+  targetAmount  Float     
+  currentAmount Float     @default(0) 
+  deadline      DateTime? 
+  
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
