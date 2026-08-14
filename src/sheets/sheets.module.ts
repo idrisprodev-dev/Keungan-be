@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { SheetsService } from './sheets.service';
-import { PrismaService } from '../prisma/prisma.service'; // Impor manual Prisma
+import { SheetsController } from './sheets.controller';
 
 @Module({
-  providers: [SheetsService, PrismaService],
-  exports: [SheetsService], // EKSPOR MUTLAK agar bisa diakses modul lain
+  controllers: [SheetsController], // Tambahkan baris ini
+  providers: [SheetsService],
+  exports: [SheetsService],
 })
 export class SheetsModule {}

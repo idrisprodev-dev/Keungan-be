@@ -3,52 +3,14 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL") // Opsional untuk Supabase
 }
 
-// ------------------------------------------------------
-// 1. MODEL PENGGUNA
-// ------------------------------------------------------
-model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  image         String?
-  spreadsheetId String?
-  plan          PlanType  @default(TRIAL)
-  trialEndsAt   DateTime?
-  createdAt     DateTime  @default(now())
-  googleAccessToken String?
-  categories    Category[]
-  transactions  Transaction[]
-  goals         Goal[]
-}
-
-enum PlanType {
-  TRIAL
-  PRO
-  PLATINUM
-}
-
-// ------------------------------------------------------
-// 2. MODEL KEUANGAN
-// ------------------------------------------------------
-model Category {
-  id          String        @id @default(cuid())
-  name        String
-  type        CategoryType
-
-  // Atribut UI Baru
-  icon        String?       // Menyimpan nama ikon Lucide (misal: 'Coffee', 'Car')
-  color       String?       // Menyimpan kode warna Hex (misal: '#00E5FF')
-  // Sistem Kontrol
-  isDefault   Boolean       @default(false) // True = bawaan sistem (tidak bisa dihapus), False = buatan user
-  userId      String
-  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  transactions Transaction[]
-  createdAt   DateTime      @default(now())
+enum Role {
+  OWNER
+  EMPLOYEE
 }
 
 enum CategoryType {
@@ -56,35 +18,123 @@ enum CategoryType {
   EXPENSE
 }
 
-model Transaction {
-  id          String    @id @default(cuid())
-  amount      Float
-  description String?
-  date        DateTime  @default(now())
-  type        CategoryType
-  
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  categoryId  String
-  category    Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+model User {
+  id                 String   @id @default(uuid())
+  email              String   @unique
+  name               String
+  picture            String?
+  role               Role     @default(OWNER)
+  ownerId            String?  // Jika role = EMPLOYEE, ini berisi ID Owner-nya
+  googleAccessToken  String?
+  googleRefreshToken String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  createdAt   DateTime  @default(now())
+  // Relasi
+  owner           User?             @relation("EmployeeToOwner", fields: [ownerId], references: [id])
+  employees       User[]            @relation("EmployeeToOwner")
+  sheetConnections SheetConnection[]
+  categories      Category[]
+  transactions    Transaction[]
+  smartRules      SmartRule[]
+  savingsGoals    SavingsGoal[]
+  widgetPrefs     WidgetPreference[]
+  magicFormulas   MagicFormula[]
 }
 
-// ------------------------------------------------------
-// 3. MODEL TABUNGAN (Untuk Paket Pro & Platinum)
-// ------------------------------------------------------
-model Goal {
-  id            String    @id @default(cuid())
-  name          String    
-  targetAmount  Float     
-  currentAmount Float     @default(0) 
-  deadline      DateTime? 
-  
+model SheetConnection {
+  id            String   @id @default(uuid())
   userId        String
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  spreadsheetId String   // ID asli dari Google Drive
+  name          String   // Contoh: "Uang Pribadi", "Toko Baju"
+  isPrimary     Boolean  @default(false) // Untuk user Pro (hanya 1 sheet utama)
+  createdAt     DateTime @default(now())
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions  Transaction[]
+  smartRules    SmartRule[]
+  magicFormulas MagicFormula[]
+}
+
+model Category {
+  id        String       @id @default(uuid())
+  userId    String
+  name      String
+  type      CategoryType
+  icon      String?
+  color     String?
+  createdAt DateTime     @default(now())
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  smartRules   SmartRule[]
+}
+
+model Transaction {
+  id          String       @id @default(uuid())
+  userId      String
+  sheetId     String       // Merujuk ke sheet mana transaksi ini dicatat
+  categoryId  String
+  amount      Float
+  type        CategoryType
+  date        DateTime
+  description String
+  paymentMethod String?    // Cash, Debit, E-Wallet
+  source      String?      // Asal input: "WEB", "WA_BOT"
+  createdAt   DateTime     @default(now())
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sheet    SheetConnection @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  category Category        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+}
+
+model SmartRule {
+  id           String   @id @default(uuid())
+  userId       String
+  keyword      String   // Contoh: "Grab"
+  categoryId   String   // Kategori tujuan
+  targetSheetId String? // Opsional: Langsung arahkan ke sheet tertentu
+  createdAt    DateTime @default(now())
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category         @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  sheet    SheetConnection? @relation(fields: [targetSheetId], references: [id], onDelete: Cascade)
+}
+
+model SavingsGoal {
+  id              String   @id @default(uuid())
+  userId          String
+  name            String
+  targetAmount    Float
+  currentAmount   Float    @default(0)
+  deadline        DateTime?
+  isAutoSweep     Boolean  @default(false)
+  sweepPercentage Float?   // Contoh: 10 (berarti 10%)
+  createdAt       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WidgetPreference {
+  id         String  @id @default(uuid())
+  userId     String
+  widgetName String  // Contoh: "Balance", "Income", "Recent Transaction"
+  isVisible  Boolean @default(true)
+  orderIndex Int     @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, widgetName])
+}
+
+model MagicFormula {
+  id        String   @id @default(uuid())
+  userId    String
+  sheetId   String
+  cellRange String   // Contoh: "Sheet1!Z9"
+  label     String   // Contoh: "Prediksi Sisa Modal"
+  createdAt DateTime @default(now())
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sheet SheetConnection @relation(fields: [sheetId], references: [id], onDelete: Cascade)
 }

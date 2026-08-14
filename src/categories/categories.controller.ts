@@ -35,18 +35,22 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
   ) {
     return this.categoriesService.updateCategory(id, body);
   }
-  @Post('batch')
-  @UseGuards(AuthGuard('jwt'))
-  createBatch(
-    @Body() createCategoryDtos: CreateCategoryDto[],
-    @Req() req: any
-  ) {
-    // Pastikan req.user.userId (atau req.user.sub) sesuai dengan token JWT Anda
-    // Jika JWT Anda menyimpan ID di 'sub', gunakan req.user.sub
-    const userId = req.user.userId || req.user.sub; 
-    return this.categoriesService.createBatch(createCategoryDtos, userId);
-  }
+// Di dalam categories.controller.ts
+@Post('batch')
+  async createBatch(@Body() body: any, @Req() req: any) {
+    const userId = req.user.userId || req.user.sub;
+    
+      // [UPDATE MUTLAK]: Ekstrak Array dengan aman. 
+      // Jika FE mengirim { categories: [...] }, ambil .categories
+    // Jika FE mengirim [...] langsung, gunakan body
+    const categoriesArray = Array.isArray(body) ? body : (body.categories || []);
 
+    if (categoriesArray.length === 0) {
+      throw new Error('Data kategori kosong atau format tidak sesuai ekspektasi');
+    }
+
+    return this.categoriesService.createBatch(userId, categoriesArray);
+  }   
   // Jangan lupa mengimpor UpdateCategoryDto dan Param di bagian atas
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'))

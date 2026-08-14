@@ -1,4 +1,4 @@
-    import { Controller, Get, Post, Body, Param, Delete, Query, Patch, UseGuards } from '@nestjs/common';
+    import { Controller, Get, Post, Body, Param, Delete, Query, Patch, UseGuards, Req } from '@nestjs/common';
     import { CategoryType } from '@prisma/client';
     import { AuthGuard } from '@nestjs/passport';
     import { TransactionsService } from './transactions.service';
@@ -23,17 +23,15 @@
     }
 
     // DELETE http://localhost:3000/transactions/[ID_TRANSAKSI]
-    @Delete(':id')
-    deleteTransaction(@Param('id') id: string) {
-        return this.transactionsService.deleteTransaction(id);
-    }
-        // PATCH http://localhost:3000/transactions/[ID_TRANSAKSI]
-  @Patch(':id')
-  updateTransaction(
-    @Param('id') id: string,
-    @Body() body: { amount?: number; description?: string; categoryId?: string; type?: CategoryType }
-  ) {
-    return this.transactionsService.updateTransaction(id, body);
+@Patch(':id')
+  update(@Param('id') id: string, @Body() updateData: any, @Req() req: any) {
+    const userId = req.user.userId || req.user.sub;
+    return this.transactionsService.update(id, userId, updateData);
   }
 
+  @Delete(':id')
+  remove(@Param('id') id: string, @Req() req: any) {
+    const userId = req.user.userId || req.user.sub;
+    return this.transactionsService.remove(id, userId);
+  }
     }

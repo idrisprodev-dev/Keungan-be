@@ -1,34 +1,48 @@
-    import { Controller, Get, Req, Res, UseGuards } from '@nestjs/common';
-    import { AuthGuard } from '@nestjs/passport';
-    import { AuthService } from './auth.service';
+import { Controller, Get, Req, Res, UseGuards } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { PrismaService } from '../prisma/prisma.service';
+import * as jwt from 'jsonwebtoken';
 
-    @Controller('auth')
-    export class AuthController {
-    constructor(private readonly authService: AuthService) {}
+@Controller('auth')
+export class AuthController {
+  constructor(private prisma: PrismaService) {}
 
-    // Rute 1: Mengarahkan user ke halaman login Google
-    @Get('google')
-    @UseGuards(AuthGuard('google'))
-    async googleAuth(@Req() req) {
-        // Proses ini ditangani otomatis oleh Passport
-    }
+  @Get('google')
+  @UseGuards(AuthGuard('google'))
+  async googleAuth(@Req() req) {}
 
-    // Rute 2: Menangkap data dari Google setelah user berhasil login
-    @Get('google/callback')
-    @UseGuards(AuthGuard('google'))
-    async googleAuthRedirect(@Req() req, @Res() res) {
-        // Panggil logika penerbitan JWT
-        const { jwt, user } = await this.authService.validateOAuthLogin(req.user);
-        
-        // Alihkan kembali ke frontend (Next.js) dengan membawa JWT di URL
-        // Di produksi, kita akan meletakkan ini di dalam HttpOnly Cookie, 
-        // namun untuk fase transisi ke frontend, menyisipkan di URL sangat efisien.
-        res.redirect(`http://localhost:3001/auth-success?token=${jwt}`);
-    }
-    // Rute 3: Mengambil data profil user yang sedang login
-  @Get('me')
-  @UseGuards(AuthGuard('jwt'))
-  async getProfile(@Req() req) {
-    return this.authService.getUserProfile(req.user.userId);
+  @Get('google/callback')
+  @UseGuards(AuthGuard('google'))
+  async googleAuthRedirect(@Req() req, @Res() res) {
+    const googleUser = req.user;
+
+    // 1. Cari atau buat User di Database (Upsert)
+    const user = await this.prisma.user.upsert({
+      where: { email: googleUser.email },
+      update: {
+        name: googleUser.name,
+        picture: googleUser.picture,
+        googleAccessToken: googleUser.accessToken,
+        // Update refresh token HANYA jika Google memberikannya (biasanya saat login pertama kali)
+        ...(googleUser.refreshToken && { googleRefreshToken: googleUser.refreshToken }),
+      },
+      create: {
+        email: googleUser.email,
+        name: googleUser.name,
+        picture: googleUser.picture,
+        googleAccessToken: googleUser.accessToken,
+        googleRefreshToken: googleUser.refreshToken,
+      },
+    });
+
+    // 2. Buat JWT internal untuk Frontend kita
+    const internalToken = jwt.sign(
+      { userId: user.id, email: user.email, role: user.role  },
+      process.env.JWT_SECRET || 'rahasia-ohduit',
+      { expiresIn: '7d' }
+    );
+
+    // 3. Arahkan ke auth-success di Frontend
+    res.redirect(`http://localhost:3001/auth-success?token=${internalToken}`);
   }
-    }
+}

@@ -1,122 +1,109 @@
-    import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-    import { PrismaService } from '../prisma/prisma.service';
-import { CreateCategoryDto } from './dto/create-category.dto';
-import { UpdateCategoryDto } from './dto/update-category.dto';
+import { 
+  Injectable, 
+  InternalServerErrorException, 
+  NotFoundException 
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { CategoryType } from '@prisma/client';
 
-    @Injectable()
-    export class CategoriesService {
-    constructor(private prisma: PrismaService) {}
+@Injectable()
+export class CategoriesService {
+  constructor(private prisma: PrismaService) {}
 
-    // 1. Mengambil semua kategori berdasarkan ID Pengguna
-    async getCategoriesByUser(userId: string) {
-        try {
-        const categories = await this.prisma.category.findMany({
-            where: { userId: userId },
-        });
-        return { status: 'success', data: categories };
-        } catch (error) {
-        return { status: 'error', message: 'Gagal mengambil kategori' };
-        }
+  // 1. Dapatkan semua kategori milik User (Dipanggil oleh Controller.findAll)
+  async findAll(userId: string) {
+    try {
+      const categories = await this.prisma.category.findMany({
+        where: { userId: userId },
+        orderBy: { createdAt: 'asc' },
+      });
+      return { status: 'success', data: categories };
+    } catch (error) {
+      throw new InternalServerErrorException('Gagal mengambil data kategori.');
     }
-
-    // 2. Membuat kategori baru
-    async createCategory(data: { name: string; type: 'INCOME' | 'EXPENSE'; userId: string }) {
-        try {
-        const newCategory = await this.prisma.category.create({
-            data: {
-            name: data.name,
-            type: data.type,
-            userId: data.userId, // ID user yang memiliki kategori ini
-            },
-        });
-        return { status: 'success', message: 'Kategori berhasil dibuat', data: newCategory };
-        } catch (error) {
-        return { status: 'error', message: 'Gagal membuat kategori. Pastikan userId valid.' };
-        }
-    }
-
-    // 3. Menghapus kategori
-    async deleteCategory(id: string) {
-        try {
-        await this.prisma.category.delete({
-            where: { id: id },
-        });
-        return { status: 'success', message: 'Kategori berhasil dihapus' };
-        } catch (error) {
-        return { status: 'error', message: 'Gagal menghapus kategori' };
-        }
-    }
-        async updateCategory(id: string, data: { name?: string; type?: 'INCOME' | 'EXPENSE' }) {
-        try {
-        const updatedCategory = await this.prisma.category.update({
-            where: { id: id },
-            data: {
-            name: data.name,
-            type: data.type,
-            },
-        });
-        return { status: 'success', message: 'Kategori berhasil diperbarui', data: updatedCategory };
-        } catch (error) {
-        return { status: 'error', message: 'Gagal memperbarui kategori. Pastikan ID valid.' };
-        }
-    }
-    // Injeksi Massal Kategori (Batch Insert)
-  async createBatch(createCategoryDtos: CreateCategoryDto[], userId: string) {
-    // Memetakan DTO yang masuk untuk menyertakan userId ke masing-masing objek
-    const categoriesData = createCategoryDtos.map(dto => ({
-      ...dto,
-      userId,
-    }));
-
-    // Mengeksekusi injeksi massal ke database PostgreSQL via Prisma
-    const result = await this.prisma.category.createMany({
-      data: categoriesData,
-      skipDuplicates: true, // Mencegah galat jika kategori dengan nama yang sama sudah ada
-    });
-
-    return {
-      message: `${result.count} kategori klasifikasi berhasil diinisiasi.`,
-      count: result.count
-    };
   }
-  async remove(id: string, userId: string) {
-    // 1. Lakukan inspeksi keberadaan data
-    const category = await this.prisma.category.findFirst({
-      where: { id, userId },
-    });
 
+  // 2. Injeksi Massal (Batch) dipanggil oleh Controller.createBatch (Onboarding)
+  async createBatch(userId: string, categoriesArray: any[]) {
+    try {
+      const dataToInsert = categoriesArray.map((cat) => ({
+        userId,
+        name: cat.name,
+        // Konversi tipe dari string FE ke Enum Prisma (Default: EXPENSE)
+        type: cat.type === 'INCOME' ? CategoryType.INCOME : CategoryType.EXPENSE,
+        icon: cat.icon || null,
+        color: cat.color || null,
+      }));
+
+      const result = await this.prisma.category.createMany({
+        data: dataToInsert,
+        skipDuplicates: true,
+      });
+
+      return { 
+        status: 'success',
+        message: `${result.count} kategori berhasil disimpan.`, 
+        count: result.count 
+      };
+    } catch (error: any) {
+      console.error('[CategoriesService Error]:', error.message);
+      throw new InternalServerErrorException('Gagal menyimpan kategori secara massal.');
+    }
+  }
+
+  // 3. Buat satu kategori tunggal (Untuk fitur tambah kategori di Dashboard)
+  async createCategory(data: { name: string; type: 'INCOME' | 'EXPENSE'; userId: string }) {
+    try {
+      const newCategory = await this.prisma.category.create({
+        data: {
+          name: data.name,
+          type: data.type,
+          userId: data.userId,
+        },
+      });
+      return { status: 'success', message: 'Kategori berhasil dibuat', data: newCategory };
+    } catch (error) {
+      throw new InternalServerErrorException('Gagal membuat kategori tunggal.');
+    }
+  }
+
+  // 4. Update Kategori (Validasi kepemilikan)
+  async updateCategory(id: string, userId: string, data: { name?: string; type?: 'INCOME' | 'EXPENSE'; icon?: string; color?: string }) {
+    const category = await this.prisma.category.findFirst({ where: { id, userId } });
+    
     if (!category) {
-      // Pastikan Anda sudah mengimpor NotFoundException dari @nestjs/common
       throw new NotFoundException('Kategori tidak ditemukan atau Anda tidak memiliki akses.');
     }
 
-    // 2. Blokir jika ini adalah kategori bawaan sistem
-    if (category.isDefault) {
-      // Pastikan Anda sudah mengimpor BadRequestException dari @nestjs/common
-      throw new BadRequestException('Otorisasi ditolak: Kategori bawaan sistem tidak dapat dihapus.');
+    try {
+      const updatedCategory = await this.prisma.category.update({
+        where: { id },
+        data: {
+          name: data.name,
+          type: data.type,
+          icon: data.icon,
+          color: data.color,
+        },
+      });
+      return { status: 'success', message: 'Kategori berhasil diperbarui', data: updatedCategory };
+    } catch (error) {
+      throw new InternalServerErrorException('Gagal memperbarui kategori.');
     }
-
-    // 3. Eksekusi penghapusan jika lolos validasi
-    return this.prisma.category.delete({
-      where: { id },
-    });
   }
 
-  // Pastikan Anda mengimpor UpdateCategoryDto di atas
-  async update(id: string, updateCategoryDto: UpdateCategoryDto, userId: string) {
-    // 1. Verifikasi keberadaan dan kepemilikan kategori
-    const category = await this.prisma.category.findFirst({
-      where: { id, userId },
-    });
-
+  // 5. Hapus Kategori (Dipanggil oleh Controller.remove)
+  async remove(userId: string, id: string) {
+    const category = await this.prisma.category.findFirst({ where: { id, userId } });
+    
     if (!category) {
-      throw new NotFoundException('Kategori tidak ditemukan atau Anda tidak memiliki otorisasi.');
+      throw new NotFoundException('Kategori tidak ditemukan atau Anda tidak memiliki akses.');
     }
 
-    // 2. Eksekusi pemutakhiran data (nama, warna, ikon, dll)
-    return this.prisma.category.update({
-      where: { id },
-      data: updateCategoryDto,
-    });
-  }
+    try {
+      await this.prisma.category.delete({ where: { id } });
+      return { status: 'success', message: 'Kategori berhasil dihapus' };
+    } catch (error) {
+      throw new InternalServerErrorException('Gagal menghapus kategori.');
     }
+  }
+}

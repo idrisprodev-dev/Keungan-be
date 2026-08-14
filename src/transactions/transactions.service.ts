@@ -1,4 +1,4 @@
-    import { Injectable } from '@nestjs/common';
+    import { Injectable, NotFoundException } from '@nestjs/common';
     import { CategoryType } from '@prisma/client';
     import { PrismaService } from '../prisma/prisma.service';
     import { SheetsService } from '../sheets/sheets.service';
@@ -27,72 +27,81 @@
     }
 
     // 2. Mencatat transaksi baru
+// 2. Mencatat transaksi baru
     async createTransaction(data: { amount: number; description?: string; userId: string; categoryId: string; type?: CategoryType }) {
         try {
-        const category = await this.prisma.category.findUnique({
-            where: { id: data.categoryId },
-            select: { type: true },
-        });
+            // [UPDATE]: Hapus select: { type: true } agar kita mendapat SELURUH objek kategori, 
+            // karena Google Sheets butuh 'category.name'.
+            const category = await this.prisma.category.findUnique({
+                where: { id: data.categoryId },
+            });
 
-        if (!category) {
-            return { status: 'error', message: 'Kategori tidak valid.' };
-        }
+            if (!category) {
+                return { status: 'error', message: 'Kategori tidak valid.' };
+            }
 
-        const newTransaction = await this.prisma.transaction.create({
-            data: {
-            amount: data.amount,
-            description: data.description,
-            type: data.type ?? category.type,
-            userId: data.userId,
-            categoryId: data.categoryId,
-            },
-        });
-        return { status: 'success', message: 'Transaksi berhasil dicatat', data: newTransaction };
+            // Simpan ke database lokal
+            const newTransaction = await this.prisma.transaction.create({
+                data: {
+                    amount: data.amount,
+                    description: data.description,
+                    type: data.type ?? category.type,
+                    userId: data.userId,
+                    categoryId: data.categoryId,
+                },
+            });
+
+            // =======================================================
+            // [INTEGRASI GOOGLE SHEETS] 
+            // Tembak fungsi syncTransaction tepat setelah masuk ke DB
+            // =======================================================
+            try {
+                await this.sheetsService.syncTransaction(data.userId, newTransaction, category);
+            } catch (sheetError) {
+                // Kita gunakan try-catch terpisah agar jika Google API sedang down, 
+                // data tetap tersimpan di lokal dan tidak membuat aplikasi crash.
+                console.error('Peringatan: Data tersimpan di DB lokal, namun gagal sinkron ke Spreadsheet:', sheetError);
+            }
+
+            return { status: 'success', message: 'Transaksi berhasil dicatat', data: newTransaction };
         } catch (error) {
-        return { status: 'error', message: 'Gagal mencatat transaksi. Pastikan ID Pengguna dan Kategori valid.' };
+            return { status: 'error', message: 'Gagal mencatat transaksi. Pastikan ID Pengguna dan Kategori valid.' };
         }
     }
-
+    
     // 3. Menghapus transaksi (jika salah input)
-    async deleteTransaction(id: string) {
-        try {
-        await this.prisma.transaction.delete({
-            where: { id: id },
-        });
-        return { status: 'success', message: 'Transaksi berhasil dihapus' };
-        } catch (error) {
-        return { status: 'error', message: 'Gagal menghapus transaksi' };
-        }
-    }
-    async updateTransaction(id: string, data: { amount?: number; description?: string; categoryId?: string; type?: CategoryType }) {
-    try {
-      let type = data.type;
+// Tambahkan ini di bawah fungsi findAll
+  async update(id: string, userId: string, updateData: any) {
+    // Verifikasi kepemilikan data (agar user A tidak bisa edit data user B)
+    const transaction = await this.prisma.transaction.findFirst({
+      where: { id, userId },
+    });
+    if (!transaction) throw new NotFoundException('Transaksi tidak ditemukan atau akses ditolak.');
 
-      if (data.categoryId) {
-        const category = await this.prisma.category.findUnique({
-          where: { id: data.categoryId },
-          select: { type: true },
-        });
-
-        if (!category) {
-          return { status: 'error', message: 'Kategori tidak valid.' };
-        }
-
-        type = type ?? category.type;
-      }
-
-      const updatedTransaction = await this.prisma.transaction.update({
-        where: { id: id },
-        data: {
-          amount: data.amount,
-          description: data.description,
-          categoryId: data.categoryId,
-          ...(type !== undefined ? { type } : {}),
-        },
+    // Jika kategori diubah, pastikan kategori baru itu valid dan milik user
+    if (updateData.categoryId) {
+      const category = await this.prisma.category.findFirst({
+        where: { id: updateData.categoryId, userId },
       });
-      return { status: 'success', message: 'Transaksi berhasil diperbarui', data: updatedTransaction };
-    } catch (error) {
-      return { status: 'error', message: 'Gagal memperbarui transaksi. Pastikan ID valid.' };
+      if (!category) throw new NotFoundException('Kategori tidak valid.');
     }
+
+    // Eksekusi update ke database
+    return this.prisma.transaction.update({
+      where: { id },
+      data: updateData,
+    });
   }
-    }
+
+  async remove(id: string, userId: string) {
+    // Verifikasi kepemilikan data
+    const transaction = await this.prisma.transaction.findFirst({
+      where: { id, userId },
+    });
+    if (!transaction) throw new NotFoundException('Transaksi tidak ditemukan atau akses ditolak.');
+
+    // Eksekusi hapus dari database
+    return this.prisma.transaction.delete({
+      where: { id },
+    });
+  }    }
