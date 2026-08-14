@@ -1,44 +1,32 @@
-import { Controller, Get, Post, Body, Param, Patch, Delete, Query, UseGuards } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { Controller, Get, Post, Put, Delete, Param, Body, Req } from '@nestjs/common';
 import { GoalsService } from './goals.service';
 
-@UseGuards(AuthGuard('jwt'))
 @Controller('goals')
 export class GoalsController {
   constructor(private readonly goalsService: GoalsService) {}
 
-  // POST http://localhost:3001/goals
-  @Post()
-  createGoal(
-    @Body() body: { name: string; targetAmount: number; deadline?: Date; userId: string }
-  ) {
-    return this.goalsService.createGoal(body);
-  }
-
-  // GET http://localhost:3001/goals?userId=[ID_USER]
   @Get()
-  getGoals(@Query('userId') userId: string) {
+  async findAll(@Req() req: any) {
+    const userId = req.user?.userId || req.user?.sub;
     return this.goalsService.getGoalsByUser(userId);
   }
 
-  // GET http://localhost:3001/goals/[ID_GOAL]
-  @Get(':id')
-  getGoalById(@Param('id') id: string) {
-    return this.goalsService.getGoalById(id);
+  @Post()
+  async create(@Body() body: any, @Req() req: any) {
+    const userId = req.user?.userId || req.user?.sub || body.userId;
+    if (!userId) throw new Error('Unauthorized');
+    return this.goalsService.createGoal(userId, body);
   }
 
-  // PATCH http://localhost:3001/goals/[ID_GOAL]
-  @Patch(':id')
-  updateGoal(
-    @Param('id') id: string,
-    @Body() body: { name?: string; targetAmount?: number; currentAmount?: number; deadline?: Date }
-  ) {
-    return this.goalsService.updateGoal(id, body);
+  @Put(':id')
+  async update(@Param('id') id: string, @Body() body: any, @Req() req: any) {
+    const userId = req.user?.userId || req.user?.sub;
+    return this.goalsService.updateGoal(id, userId, body);
   }
 
-  // DELETE http://localhost:3001/goals/[ID_GOAL]
   @Delete(':id')
-  deleteGoal(@Param('id') id: string) {
-    return this.goalsService.deleteGoal(id);
+  async remove(@Param('id') id: string, @Req() req: any) {
+    const userId = req.user?.userId || req.user?.sub;
+    return this.goalsService.deleteGoal(id, userId);
   }
 }

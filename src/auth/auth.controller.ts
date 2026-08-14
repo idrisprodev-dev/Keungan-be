@@ -2,15 +2,18 @@ import { Controller, Get, Req, Res, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { PrismaService } from '../prisma/prisma.service';
 import * as jwt from 'jsonwebtoken';
+import { Public } from './decorators/public.decorator';
 
 @Controller('auth')
 export class AuthController {
   constructor(private prisma: PrismaService) {}
 
+  @Public() // <-- KUNCI PENYELESAIAN ERROR 401 ADA DI SINI
   @Get('google')
   @UseGuards(AuthGuard('google'))
   async googleAuth(@Req() req) {}
 
+  @Public() // <-- WAJIB DIPASANG JUGA DI SINI
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   async googleAuthRedirect(@Req() req, @Res() res) {
@@ -42,7 +45,7 @@ export class AuthController {
       { expiresIn: '7d' }
     );
 
-    // 3. Arahkan ke auth-success di Frontend
-    res.redirect(`http://localhost:3001/auth-success?token=${internalToken}`);
+    // 3. Arahkan ke halaman auth/callback yang kita buat di Frontend pada STEP 14
+    res.redirect(`http://localhost:3001/auth/callback?token=${internalToken}`);
   }
 }

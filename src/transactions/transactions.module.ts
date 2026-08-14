@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
-import { TransactionsService } from './transactions.service';
 import { TransactionsController } from './transactions.controller';
-import { SheetsModule } from '../sheets/sheets.module';
+import { TransactionsService } from './transactions.service';
 import { PrismaModule } from '../prisma/prisma.module';
+import { SheetsModule } from '../sheets/sheets.module'; // WAJIB DIIMPOR
 
 @Module({
-  imports: [SheetsModule,PrismaModule],
+  imports: [PrismaModule, SheetsModule],
+  controllers: [TransactionsController],
   providers: [TransactionsService],
-  controllers: [TransactionsController]
 })
 export class TransactionsModule {}

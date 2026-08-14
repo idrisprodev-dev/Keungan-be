@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards, UsePipes, Delete } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards, UsePipes, Delete, Req } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { UsersService } from './users.service';
 
@@ -27,5 +27,17 @@ export class UsersController {
   @Delete(':id')
   deleteUser(@Param('id') id: string) {
     return this.usersService.deleteUser(id);
+  }
+  @Get('me')
+  async getMe(@Req() req: any) {
+    // Karena aplikasi sudah dilindungi oleh JwtAuthGuard (Step 10), 
+    // req.user pasti berisi payload dari JWT yang valid.
+    const userId = req.user?.userId || req.user?.sub;
+    
+    if (!userId) {
+      throw new Error('Sesi tidak valid.');
+    }
+
+    return this.usersService.getProfile(userId);
   }
 }

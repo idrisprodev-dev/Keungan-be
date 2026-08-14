@@ -1,4 +1,4 @@
-        import { Injectable } from '@nestjs/common';
+        import { Injectable, NotFoundException } from '@nestjs/common';
         import { PrismaService } from '../prisma/prisma.service'; // Pastikan path ini sesuai dengan lokasi PrismaService Anda
 
         @Injectable()
@@ -54,7 +54,6 @@
         where: { id: id },
         data: {
           name: data.name,
-          plan: data.plan,
         },
       });
 
@@ -92,4 +91,25 @@
       };
     }
   }
-        }
+  async getProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        picture: true,
+        role: true,
+        createdAt: true,
+        // Kita tidak men-select data sensitif jika ada
+      }
+    });
+
+    if (!user) {
+      throw new NotFoundException('Data pengguna tidak ditemukan di dalam sistem.');
+    }
+
+    return { status: 'success', data: user };
+  }
+}
+        

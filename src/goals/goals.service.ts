@@ -1,80 +1,92 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException, InternalServerErrorException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class GoalsService {
   constructor(private prisma: PrismaService) {}
 
-  // 1. CREATE: Membuat target tabungan baru
-  async createGoal(data: { name: string; targetAmount: number; deadline?: Date; userId: string }) {
+  // 1. Buat Tabungan Baru (Dengan Limit)
+  async createGoal(userId: string, data: { name: string; targetAmount: number; deadline?: string }) {
+    // Validasi Limit: Maksimal 3 Tabungan per User (Khusus Paket Pro)
+    const currentGoalsCount = await this.prisma.savingsGoal.count({ where: { userId } });
+    
+    if (currentGoalsCount >= 3) {
+      throw new BadRequestException('Batas maksimal 3 Tabungan Terfokus telah tercapai. Hapus tabungan lama untuk membuat yang baru.');
+    }
+
     try {
-      const newGoal = await this.prisma.goal.create({
+      const newGoal = await this.prisma.savingsGoal.create({
         data: {
+          userId: userId,
           name: data.name,
-          targetAmount: data.targetAmount,
+          targetAmount: Number(data.targetAmount),
           deadline: data.deadline ? new Date(data.deadline) : null,
-          userId: data.userId,
+          currentAmount: 0, // Saldo awal selalu 0
         },
       });
-      return { status: 'success', message: 'Target tabungan berhasil dibuat', data: newGoal };
+      return { status: 'success', message: 'Tabungan berhasil dibuat', data: newGoal };
     } catch (error) {
-      return { status: 'error', message: 'Gagal membuat target tabungan' };
+      throw new InternalServerErrorException('Gagal membuat tabungan.');
     }
   }
 
-  // 2. READ (All): Mengambil semua target tabungan milik user
+  // 2. Ambil Semua Tabungan & Kalkulasi Progress
   async getGoalsByUser(userId: string) {
+    const goals = await this.prisma.savingsGoal.findMany({
+      where: { userId: userId },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Suntikkan kalkulasi 'progress' agar FE tinggal render
+    const goalsWithProgress = goals.map(goal => {
+      const percentage = (goal.currentAmount / goal.targetAmount) * 100;
+      return {
+        ...goal,
+        progress: Math.min(Math.round(percentage), 100) // Maksimal 100%
+      };
+    });
+
+    return { status: 'success', data: goalsWithProgress };
+  }
+
+  // 3. Ambil Tabungan Spesifik
+  async getGoalById(id: string, userId: string) {
+    const goal = await this.prisma.savingsGoal.findFirst({
+      where: { id: id, userId: userId },
+    });
+    if (!goal) throw new NotFoundException('Tabungan tidak ditemukan atau akses ditolak.');
+    return goal;
+  }
+
+  // 4. Update Tabungan (Tambah Saldo / Edit Target)
+  async updateGoal(id: string, userId: string, data: { name?: string; targetAmount?: number; currentAmount?: number; deadline?: string }) {
+    await this.getGoalById(id, userId); // Validasi kepemilikan
+    
+    const updateData: any = { ...data };
+    if (data.targetAmount) updateData.targetAmount = Number(data.targetAmount);
+    if (data.currentAmount) updateData.currentAmount = Number(data.currentAmount);
+    if (data.deadline) updateData.deadline = new Date(data.deadline);
+
     try {
-      const goals = await this.prisma.goal.findMany({
-        where: { userId: userId },
-        orderBy: { createdAt: 'desc' }
+      const updatedGoal = await this.prisma.savingsGoal.update({
+        where: { id: id },
+        data: updateData,
       });
-      return { status: 'success', data: goals };
+      return { status: 'success', message: 'Tabungan diperbarui', data: updatedGoal };
     } catch (error) {
-      return { status: 'error', message: 'Gagal mengambil data tabungan' };
+      throw new InternalServerErrorException('Gagal memperbarui tabungan.');
     }
   }
 
-  // 3. READ (Single): Mengambil satu target tabungan secara spesifik berdasarkan ID
-  async getGoalById(id: string) {
-    try {
-      const goal = await this.prisma.goal.findUnique({
-        where: { id: id },
-      });
-      if (!goal) return { status: 'error', message: 'Tabungan tidak ditemukan' };
-      return { status: 'success', data: goal };
-    } catch (error) {
-      return { status: 'error', message: 'Gagal mengambil detail tabungan' };
-    }
-  }
+  // 5. Hapus Tabungan
+  async deleteGoal(id: string, userId: string) {
+    await this.getGoalById(id, userId); // Validasi kepemilikan
 
-  // 4. UPDATE: Memperbarui seluruh/sebagian data tabungan (Nama, Target, Progres, Tenggat)
-  async updateGoal(id: string, data: { name?: string; targetAmount?: number; currentAmount?: number; deadline?: Date }) {
     try {
-      const updatedGoal = await this.prisma.goal.update({
-        where: { id: id },
-        data: {
-          name: data.name,
-          targetAmount: data.targetAmount,
-          currentAmount: data.currentAmount,
-          deadline: data.deadline ? new Date(data.deadline) : undefined,
-        },
-      });
-      return { status: 'success', message: 'Data tabungan berhasil diperbarui', data: updatedGoal };
+      await this.prisma.savingsGoal.delete({ where: { id: id } });
+      return { status: 'success', message: 'Tabungan berhasil dihapus' };
     } catch (error) {
-      return { status: 'error', message: 'Gagal memperbarui tabungan. Pastikan ID valid.' };
-    }
-  }
-
-  // 5. DELETE: Menghapus target tabungan
-  async deleteGoal(id: string) {
-    try {
-      await this.prisma.goal.delete({
-        where: { id: id },
-      });
-      return { status: 'success', message: 'Target tabungan dihapus' };
-    } catch (error) {
-      return { status: 'error', message: 'Gagal menghapus tabungan' };
+      throw new InternalServerErrorException('Gagal menghapus tabungan.');
     }
   }
 }
