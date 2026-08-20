@@ -62,4 +62,35 @@ export class SmartRulesService {
       throw new InternalServerErrorException('Gagal menghapus Smart Rule.');
     }
   }
+
+  /**
+   * Mengevaluasi deskripsi transaksi user berdasarkan aturan pintar (Smart Rules) yang mereka miliki
+   */
+  async evaluateTransaction(userId: string, description: string) {
+    if (!description) return null;
+
+    // 1. Ambil semua aturan (rules) milik user dari database
+    const rules = await this.prisma.smartRule.findMany({
+      where: { userId },
+      // Diurutkan berdasarkan yang terbaru agar aturan baru lebih prioritas
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // 2. Loop rules untuk mencari kecocokan kata (keyword matching)
+    for (const rule of rules) {
+      // Mengubah ke huruf kecil agar pencocokan bersifat case-insensitive
+      const isMatch = description.toLowerCase().includes(rule.keyword.toLowerCase());
+
+      if (isMatch) {
+        // Jika cocok, kembalikan data kategori dan sheet yang terikat pada rule ini
+        return {
+          categoryId: rule.categoryId,
+          targetSheetId: rule.targetSheetId,
+        };
+      }
+    }
+
+    // Jika tidak ada aturan yang cocok, kembalikan null (biarkan user mengisi manual)
+    return null;
+  }
 }

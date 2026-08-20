@@ -1,11 +1,17 @@
-import { Injectable, InternalServerErrorException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SheetsService } from '../sheets/sheets.service';
-import { CategoryType } from '@prisma/client';
+import { CreateTransactionDto } from './dto/create-transaction.dto';
+import { SmartRulesService } from '../smart-rules/smart-rules.service';
 
 @Injectable()
 export class TransactionsService {
-  constructor(private prisma: PrismaService, private sheetsService: SheetsService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly sheetsService: SheetsService,
+    private readonly smartRulesService: SmartRulesService, // <- Inject di sini
+  ) {}
+  private readonly logger = new Logger(TransactionsService.name);
 
   async findAll(userId: string) {
     return this.prisma.transaction.findMany({
@@ -13,75 +19,71 @@ export class TransactionsService {
     });
   }
 
-async create(userId: string, data: { amount: number; categoryId?: string; targetSheetId?: string; description?: string; paymentMethod?: string; date?: string; type?: 'INCOME'|'EXPENSE' }) {
-    
-    let finalCategoryId = data.categoryId;
-    let finalTargetSheetId = data.targetSheetId;
+async create(userId: string, createTransactionDto: CreateTransactionDto) {
+    try {
+      // Evaluasi otomatis jika categoryId tidak disertakan oleh frontend
+      let resolvedCategoryId = createTransactionDto.categoryId;
 
-    // ==========================================
-    // 🧠 SMART RULES ENGINE (AUTO-KATEGORISASI)
-    // ==========================================
-    if (!finalCategoryId && data.description) {
-      const descLower = data.description.toLowerCase();
-      
-      // Tarik semua aturan milik user
-      const rules = await this.prisma.smartRule.findMany({ where: { userId } });
-      
-      // Pindai kecocokan kata kunci
-      const matchedRule = rules.find(rule => descLower.includes(rule.keyword));
+      if (!resolvedCategoryId) {
+        const matchedRule = await this.smartRulesService.evaluateTransaction(
+          userId,
+          createTransactionDto.description || '',
+        );
 
-      if (matchedRule) {
-        finalCategoryId = matchedRule.categoryId;
-        // Jika aturan tersebut juga memerintahkan pindah Sheet, timpa sheet tujuannya
-        if (matchedRule.targetSheetId) {
-          finalTargetSheetId = matchedRule.targetSheetId;
+        if (matchedRule) {
+          resolvedCategoryId = matchedRule.categoryId;
         }
       }
-    }
 
-    // Validasi Kategori Final
-    if (!finalCategoryId) {
-      throw new BadRequestException('Kategori wajib diisi atau tidak ada Smart Rule yang cocok dengan deskripsi ini.');
-    }
+      // Jika setelah evaluasi kategori masih kosong, lempar error.
+      if (!resolvedCategoryId) {
+        throw new BadRequestException('Kategori wajib diisi atau tidak ada Smart Rule yang cocok.');
+      }
+      // Cari koneksi sheet utama milik user
+      const primarySheet = await this.prisma.sheetConnection.findFirst({
+        where: { userId, isPrimary: true },
+      });
 
-    const category = await this.prisma.category.findFirst({ where: { id: finalCategoryId, userId } });
-    if (!category) throw new BadRequestException('Kategori tidak valid.');
+      if (!primarySheet) {
+        throw new BadRequestException('Tidak ada koneksi Google Sheet utama yang ditemukan. Harap hubungkan terlebih dahulu.');
+      }
 
-    // ==========================================
-    // 🔀 MULTI-SHEET ROUTING
-    // ==========================================
-    let targetSheet;
-    if (finalTargetSheetId) {
-      targetSheet = await this.prisma.sheetConnection.findFirst({ where: { id: finalTargetSheetId, userId } });
-      if (!targetSheet) throw new BadRequestException('Koneksi Google Sheets tujuan tidak valid.');
-    } else {
-      targetSheet = await this.prisma.sheetConnection.findFirst({ where: { userId, isPrimary: true } });
-      if (!targetSheet) throw new BadRequestException('Anda belum menghubungkan Google Sheets.');
-    }
-
-    try {
-      // Simpan ke Database
+      // 1. Simpan ke database
       const newTransaction = await this.prisma.transaction.create({
         data: {
           userId,
-          sheetId: targetSheet.id,
-          categoryId: category.id,
-          amount: data.amount,
-          type: data.type ? (data.type as CategoryType) : category.type,
-          date: data.date ? new Date(data.date) : new Date(),
-          description: data.description || category.name,
-          paymentMethod: data.paymentMethod || 'Cash',
-          source: 'WEB', // Nantinya bisa diubah jadi 'AUTO' jika masuk via sistem lain
+          sheetId: primarySheet.id, // WAJIB ADA
+          categoryId: resolvedCategoryId, // WAJIB ADA
+          amount: createTransactionDto.amount,
+          type: createTransactionDto.type,
+          description: createTransactionDto.description || '',
+          // Default ke hari ini jika tidak dikirim dari frontend
+          date: createTransactionDto.date ? new Date(createTransactionDto.date) : new Date(),
         },
       });
 
-      // Tembak ke Google Sheets
-      this.sheetsService.syncTransaction(userId, targetSheet.spreadsheetId, newTransaction, category)
-        .catch(err => console.error('[Sinkronisasi Gagal]:', err.message));
+      // 2. Kirim ke antrean background (Redis/BullMQ)
+      try {
+        await this.sheetsService.queueSyncTransaction(userId, newTransaction);
+      } catch (queueError) {
+        this.logger.error(`Gagal antre sync Sheets untuk transaksi ${newTransaction.id}`);
+      }
 
-      return { status: 'success', message: 'Transaksi berhasil dicatat & dikategorikan.', data: newTransaction };
+      // 3. Return sukses ke frontend
+      return {
+        success: true,
+        message: 'Transaksi berhasil disimpan',
+        data: newTransaction,
+      };
+
     } catch (error) {
-      throw new InternalServerErrorException('Gagal menyimpan transaksi.');
+      // Cek apakah error adalah instance dari Error untuk bisa akses .stack
+      if (error instanceof Error) {
+        this.logger.error(`Gagal membuat transaksi untuk user ${userId}`, error.stack);
+      } else {
+        this.logger.error(`Gagal membuat transaksi untuk user ${userId}`, error);
+      }
+      throw new InternalServerErrorException('Gagal menyimpan transaksi ke database');
     }
   }
   async remove(userId: string, id: string) {

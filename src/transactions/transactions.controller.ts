@@ -1,7 +1,11 @@
-import { Controller, Get, Post, Delete, Param, Body, Req } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Body, Req, UseInterceptors, UseGuards } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
+import { CreateTransactionDto } from './dto/create-transaction.dto';
+import { IdempotencyInterceptor } from '../common/interceptors/idempotency.interceptor';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('transactions')
+@UseGuards(JwtAuthGuard)
 export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}
 
@@ -11,12 +15,13 @@ export class TransactionsController {
     return this.transactionsService.findAll(userId);
   }
 
+  // @UseInterceptors memastikan bahwa sebelum fungsi create() dieksekusi,
+  // request harus lolos dari pemeriksaan IdempotencyInterceptor terlebih dahulu.
   @Post()
-  async create(@Body() body: any, @Req() req: any) {
-    const userId = req.user?.userId || req.user?.sub || body.userId;
-    if (!userId) throw new Error('Unauthorized');
-    
-    return this.transactionsService.create(userId, body);
+  @UseInterceptors(IdempotencyInterceptor)
+  async create(@Body() createTransactionDto: CreateTransactionDto, @Req() req: any) {
+    const userId = req.user?.userId || req.user?.sub;
+    return this.transactionsService.create(userId, createTransactionDto);
   }
 
   @Delete(':id')

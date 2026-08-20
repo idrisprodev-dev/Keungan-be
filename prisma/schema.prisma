@@ -29,6 +29,7 @@ model User {
   googleRefreshToken String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  sheetId            String?
 
   // Relasi
   owner           User?             @relation("EmployeeToOwner", fields: [ownerId], references: [id])

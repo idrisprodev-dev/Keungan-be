@@ -1,17 +1,44 @@
 import { Injectable, InternalServerErrorException, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { google } from 'googleapis';
 import { PrismaService } from '../prisma/prisma.service';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 
 @Injectable()
 export class SheetsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService,
+    @InjectQueue('google-sheets-sync') private sheetsQueue: Queue,
+  ) {}
 
-  private getAuthClient(accessToken: string) {
+  private getAuthClient(token: { access_token?: string | null, refresh_token?: string | null }) {
     const auth = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
-    auth.setCredentials({ access_token: accessToken });
+    auth.setCredentials(token);
     return auth;
   }
 
+async appendTransactionRow(
+  refreshToken: string, 
+  spreadsheetId: string, 
+  transactionData: any[] // <-- Pastikan parameternya disetel sebagai any[]
+) {
+  try {
+    const auth = this.getAuthClient({ refresh_token: refreshToken });
+    const sheets = google.sheets({ version: 'v4', auth });
+    const values = [transactionData];
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: 'Transactions!A:E',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values },
+    });
+    console.log(`Berhasil sync transaksi ke Sheet ID: ${spreadsheetId}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Gagal sync ke Google Sheets:', errorMessage);
+    throw new InternalServerErrorException(`Gagal menulis ke Google Sheets: ${errorMessage}`);
+  }
+}
   // 1. Ambil daftar koneksi Sheet milik User
   async findAllConnections(userId: string) {
     return this.prisma.sheetConnection.findMany({
@@ -102,30 +129,42 @@ async createSpreadsheet(userId: string, title: string) {
     }
   }
     
-  // 3. Sinkronisasi (Menerima targetSpreadsheetId Google yang spesifik)
-  async syncTransaction(userId: string, targetSpreadsheetId: string, transaction: any, category: any) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user?.googleAccessToken) return;
+  async queueSyncTransaction(userId: string, transactionData: any) {
+    await this.sheetsQueue.add(
+      'sync-single-transaction',
+      { userId, transaction: transactionData },
+      {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: true,
+      },
+    );
+    return { status: 'queued' };
+  }
 
-    const auth = this.getAuthClient(user.googleAccessToken);
+  // Metode ini tampaknya tidak lagi digunakan oleh SheetsProcessor, namun ini perbaikannya:
+  async syncTransactionFromJob(userId: string, targetSpreadsheetId: string, transaction: any, category: any) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { googleRefreshToken: true } });
+    if (!user?.googleRefreshToken) {
+      console.error(`Sinkronisasi dibatalkan: Refresh token untuk user ${userId} tidak ditemukan.`);
+      return;
+    }
+
+    const auth = this.getAuthClient({ refresh_token: user.googleRefreshToken });
     const sheets = google.sheets({ version: 'v4', auth });
 
-    try {
-      const formattedDate = new Date(transaction.createdAt).toLocaleString('id-ID');
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: targetSpreadsheetId,
-        range: 'Sheet1!A:G',
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[
-            formattedDate, transaction.description || category.name, category.name, 
-            transaction.amount, transaction.paymentMethod || 'Cash', 
-            new Date(transaction.createdAt).toISOString().slice(0, 10), transaction.source || 'Manual'
-          ]],
-        },
-      });
-    } catch (error: any) {
-      console.error('Galat syncTransaction:', error.message);
-    }
+    // Menggunakan range 'Transactions' sesuai dengan sheet yang dibuat di createSpreadsheet
+    const range = 'Transactions!A:E';
+    const values = [[
+      new Date(transaction.date).toLocaleDateString('id-ID'), transaction.type, category.name, transaction.amount, transaction.description
+    ]];
+
+    await sheets.spreadsheets.values.append({ spreadsheetId: targetSpreadsheetId, range, valueInputOption: 'USER_ENTERED', requestBody: { values } });
+  }
+  
+  async findPrimaryConnection(userId: string) {
+    return this.prisma.sheetConnection.findFirst({
+      where: { userId, isPrimary: true },
+    });
   }
 }
