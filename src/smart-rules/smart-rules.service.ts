@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -11,8 +11,7 @@ export class SmartRulesService {
       return await this.prisma.smartRule.findMany({
         where: { userId },
         include: { 
-          category: true, // Sertakan detail kategori
-          sheet: true     // Sertakan info target sheet
+          category: true, // Hanya sertakan detail kategori
         },
         orderBy: { createdAt: 'desc' }
       });
@@ -22,34 +21,73 @@ export class SmartRulesService {
   }
 
   // 2. Buat aturan pintar baru
-  async create(userId: string, data: { keyword: string; categoryId: string; targetSheetId?: string }) {
-    // Validasi: Pastikan Kategori yang dituju benar-benar milik User ini
-    const category = await this.prisma.category.findFirst({
-      where: { id: data.categoryId, userId }
-    });
+async create(userId: string, data: any) {
+  const user = await this.prisma.user.findUnique({
+    where: { id: userId },
+    select: { plan: true }
+  });
 
-    if (!category) {
-      throw new BadRequestException('Kategori tidak valid atau tidak ditemukan.');
-    }
+  if (!user) {
+    throw new NotFoundException('User tidak ditemukan.');
+  }
 
-    try {
-      const newRule = await this.prisma.smartRule.create({
-        data: {
-          userId,
-          keyword: data.keyword.toLowerCase(), // Normalisasi keyword menjadi huruf kecil
-          categoryId: data.categoryId,
-          targetSheetId: data.targetSheetId || null,
-        }
-      });
-      return { status: 'success', message: 'Smart Rule berhasil dibuat', data: newRule };
-    } catch (error) {
-      throw new InternalServerErrorException('Gagal membuat Smart Rule.');
+  const totalRules = await this.prisma.smartRule.count({
+    where: { userId: userId }
+  });
+
+  if (user.plan === 'FREE') {
+    // Logika jika Free Trial habis bisa ditaruh di sini
+  }
+  else if (user.plan === 'PRO') {
+    if (totalRules >= 10) {
+      throw new ForbiddenException('Batas maksimal tercapai! Paket Pro hanya bisa membuat 10 Smart Rules. Silakan upgrade ke Platinum.');
     }
   }
 
-  // 3. Hapus aturan pintar
-  async remove(userId: string, id: string) {
+  return await this.prisma.smartRule.create({
+    data: {
+      ...data,
+      userId: userId,
+    }
+  });
+}
+
+  
+  
+  // 3. Perbarui aturan pintar
+  async update(userId: string, id: string, data: { keyword?: string; categoryId?: string }) {
     const rule = await this.prisma.smartRule.findFirst({ where: { id, userId } });
+
+    if (!rule) {
+      throw new NotFoundException('Smart Rule tidak ditemukan atau Anda tidak memiliki akses.');
+    }
+
+    if (data.categoryId) {
+      const category = await this.prisma.category.findFirst({
+        where: { id: data.categoryId, userId }
+      });
+
+      if (!category) {
+        throw new BadRequestException('Kategori tidak valid atau tidak ditemukan.');
+      }
+    }
+
+    try {
+      const updatedRule = await this.prisma.smartRule.update({
+        where: { id },
+        data: {
+          ...(data.keyword !== undefined && { keyword: data.keyword.toLowerCase() }),
+          ...(data.categoryId !== undefined && { categoryId: data.categoryId }),
+        }
+      });
+      return { status: 'success', message: 'Smart Rule berhasil diperbarui', data: updatedRule };
+    } catch (error) {
+      throw new InternalServerErrorException('Gagal memperbarui Smart Rule.');
+    }
+  }
+
+  // 4. Hapus aturan pintar
+  async remove(userId: string, id: string) {    const rule = await this.prisma.smartRule.findFirst({ where: { id, userId } });
     
     if (!rule) {
       throw new NotFoundException('Smart Rule tidak ditemukan atau Anda tidak memiliki akses.');
@@ -82,10 +120,9 @@ export class SmartRulesService {
       const isMatch = description.toLowerCase().includes(rule.keyword.toLowerCase());
 
       if (isMatch) {
-        // Jika cocok, kembalikan data kategori dan sheet yang terikat pada rule ini
+        // Jika cocok, kembalikan data kategori yang terikat pada rule ini
         return {
           categoryId: rule.categoryId,
-          targetSheetId: rule.targetSheetId,
         };
       }
     }

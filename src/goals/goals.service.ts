@@ -6,12 +6,19 @@ export class GoalsService {
   constructor(private prisma: PrismaService) {}
 
   // 1. Buat Tabungan Baru (Dengan Limit)
-  async createGoal(userId: string, data: { name: string; targetAmount: number; deadline?: string }) {
-    // Validasi Limit: Maksimal 3 Tabungan per User (Khusus Paket Pro)
+async createGoal(userId: string, data: { name: string; targetAmount: number; deadline?: string }) {
+    // 1. Ambil data plan user dari database
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { plan: true },
+    });
+
+    // 2. Hitung jumlah goals yang sudah dibuat user saat ini
     const currentGoalsCount = await this.prisma.savingsGoal.count({ where: { userId } });
     
-    if (currentGoalsCount >= 3) {
-      throw new BadRequestException('Batas maksimal 3 Tabungan Terfokus telah tercapai. Hapus tabungan lama untuk membuat yang baru.');
+    // 3. Validasi Limit: Jika paket PRO, maksimal 10 Goals aktif
+    if (user?.plan === 'PRO' && currentGoalsCount >= 10) {
+      throw new BadRequestException('Batas maksimal 10 Tujuan Aktif untuk Paket Pro telah tercapai. Upgrade ke Platinum untuk menambah tanpa batas!');
     }
 
     try {
@@ -29,7 +36,7 @@ export class GoalsService {
       throw new InternalServerErrorException('Gagal membuat tabungan.');
     }
   }
-
+  
   // 2. Ambil Semua Tabungan & Kalkulasi Progress
   async getGoalsByUser(userId: string) {
     const goals = await this.prisma.savingsGoal.findMany({

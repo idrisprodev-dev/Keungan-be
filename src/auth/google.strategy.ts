@@ -12,8 +12,6 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       scope: [
         'email', 
         'profile', 
-        'https://www.googleapis.com/auth/spreadsheets', 
-        'https://www.googleapis.com/auth/drive.file'    
       ],
     });
   }

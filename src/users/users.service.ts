@@ -13,6 +13,7 @@
                 status: 'success',
                 message: 'Data pengguna berhasil diambil',
                 data: users,
+                
             };
             } catch (error) {
             return {
@@ -48,7 +49,7 @@
         }
     }
 
-    async updateUser(id: string, data: { name?: string; plan?: 'TRIAL' | 'PRO' | 'PLATINUM' }) {
+    async updateUser(id: string, data: { name?: string; plan?: string }) {
     try {
       const updatedUser = await this.prisma.user.update({
         where: { id: id },
@@ -101,6 +102,7 @@
         picture: true,
         role: true,
         createdAt: true,
+        plan: true,
         // Kita tidak men-select data sensitif jika ada
       }
     });
@@ -110,6 +112,12 @@
     }
 
     return { status: 'success', data: user };
+  }
+  async updatePlan(userId: string, plan: string) {
+    return await this.prisma.user.update({
+      where: { id: userId },
+      data: { plan: plan as any },
+    });
   }
 }
         

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Param, Body, Req, UseInterceptors, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Body, Req, UseInterceptors, UseGuards, Put } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { IdempotencyInterceptor } from '../common/interceptors/idempotency.interceptor';
@@ -28,5 +28,10 @@ export class TransactionsController {
   async remove(@Param('id') id: string, @Req() req: any) {
     const userId = req.user?.userId || req.user?.sub;
     return this.transactionsService.remove(userId, id);
+  }
+
+  @Put(':id')
+  update(@Req() req, @Param('id') id: string, @Body() updateData: any) {
+    return this.transactionsService.update(req.user.id, id, updateData);
   }
 }

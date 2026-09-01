@@ -7,7 +7,6 @@ import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
-import { SheetsModule } from './sheets/sheets.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { GoalsModule } from './goals/goals.module';
 import { UsersModule } from './users/users.module';
@@ -16,6 +15,11 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard'; // IMPORT INI
 import { SmartRulesModule } from './smart-rules/smart-rules.module';
 import { BullModule } from '@nestjs/bullmq';
 import { ReportsModule } from './reports/reports.module';
+import { BudgetsModule } from './budgets/budgets.module';
+import { WhatsappService } from './whatsapp/whatsapp.service';
+
+import { WhatsappModule } from './whatsapp/whatsapp.module';
+import { DevModule } from './dev/dev.module';
 
 @Module({
   imports: [
@@ -36,18 +40,26 @@ import { ReportsModule } from './reports/reports.module';
    // 1. Konfigurasi Global BullMQ
     BullModule.forRoot({
       connection: {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379', 10),        // password: process.env.REDIS_PASSWORD, // aktifkan jika redis butuh password
+        url: process.env.REDIS_URL,
+        // Konfigurasi wajib untuk menangani enkripsi TLS pada Upstash (rediss://)
+        tls: {
+          rejectUnauthorized: false,
+        },
       },
-    }),
-    PrismaModule, AuthModule, CategoriesModule, SheetsModule,
+   }),
+    PrismaModule, AuthModule, CategoriesModule, 
     SmartRulesModule, TransactionsModule, GoalsModule, UsersModule, WidgetsModule,
-    ReportsModule, // <--- 2. TAMBAHKAN BARIS INI // <--- Tambahkan baris ini agar endpoint terbaca
+    ReportsModule,
+    BudgetsModule,
+    WhatsappModule, // <--- 2. TAMBAHKAN BARIS INI // <--- Tambahkan baris ini agar endpoint terbaca
+    DevModule,
 
   ],
   controllers: [AppController],
   providers: [
     AppService,
+    
+    
     // TAMBAHKAN BLOK INI UNTUK MENGUNCI SELURUH APLIKASI
     {
       provide: APP_GUARD,

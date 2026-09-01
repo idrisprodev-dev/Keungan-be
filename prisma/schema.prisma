@@ -18,6 +18,16 @@ enum CategoryType {
   EXPENSE
 }
 
+
+// Tambahkan Enum ini di luar model
+enum PlanType {
+  FREE
+  PRO
+  PLATINUM
+}
+
+
+
 model User {
   id                 String   @id @default(uuid())
   email              String   @unique
@@ -29,33 +39,25 @@ model User {
   googleRefreshToken String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
-  sheetId            String?
+  budgets            Budget[]
+  plan               PlanType @default(FREE)
+  trialEndsAt        DateTime?
+  subscriptionEndsAt DateTime?
+  whatsappNumber     String?  @unique // Nomor WA yang terhubung (bisa kosong dulu)
+  waLinkingToken     String?  // Menyimpan kode unik sementara (misal: DOWITH-8842)
+  waTokenExpiresAt   DateTime? // Batas waktu kadaluarsa kode unik (misal: 10 menit)
 
-  // Relasi
   owner           User?             @relation("EmployeeToOwner", fields: [ownerId], references: [id])
   employees       User[]            @relation("EmployeeToOwner")
-  sheetConnections SheetConnection[]
   categories      Category[]
   transactions    Transaction[]
   smartRules      SmartRule[]
   savingsGoals    SavingsGoal[]
   widgetPrefs     WidgetPreference[]
   magicFormulas   MagicFormula[]
+  
 }
 
-model SheetConnection {
-  id            String   @id @default(uuid())
-  userId        String
-  spreadsheetId String   // ID asli dari Google Drive
-  name          String   // Contoh: "Uang Pribadi", "Toko Baju"
-  isPrimary     Boolean  @default(false) // Untuk user Pro (hanya 1 sheet utama)
-  createdAt     DateTime @default(now())
-
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions  Transaction[]
-  smartRules    SmartRule[]
-  magicFormulas MagicFormula[]
-}
 
 model Category {
   id        String       @id @default(uuid())
@@ -65,6 +67,8 @@ model Category {
   icon      String?
   color     String?
   createdAt DateTime     @default(now())
+  budgets   Budget[]
+  
 
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions Transaction[]
@@ -72,21 +76,19 @@ model Category {
 }
 
 model Transaction {
-  id          String       @id @default(uuid())
-  userId      String
-  sheetId     String       // Merujuk ke sheet mana transaksi ini dicatat
-  categoryId  String
-  amount      Float
-  type        CategoryType
-  date        DateTime
-  description String
-  paymentMethod String?    // Cash, Debit, E-Wallet
-  source      String?      // Asal input: "WEB", "WA_BOT"
-  createdAt   DateTime     @default(now())
+  id            String       @id @default(uuid())
+  userId        String
+  categoryId    String?      // 👈 Beri tanda tanya agar tidak wajib saat input via WA
+  amount        Float        // Skema kamu menggunakan Float, pastikan tipe data aman
+  type          CategoryType @default(EXPENSE) // 👈 Beri default 'EXPENSE' (Pengeluaran)
+  date          DateTime     @default(now())   // 👈 Beri default tanggal hari ini
+  description   String
+  paymentMethod String?      
+  source        String?      // Bisa diisi "WA_BOT" nanti
+  createdAt     DateTime     @default(now())
 
-  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sheet    SheetConnection @relation(fields: [sheetId], references: [id], onDelete: Cascade)
-  category Category        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category      Category?    @relation(fields: [categoryId], references: [id], onDelete: Cascade) // 👈 Beri tanda tanya juga di relasinya
 }
 
 model SmartRule {
@@ -94,26 +96,25 @@ model SmartRule {
   userId       String
   keyword      String   // Contoh: "Grab"
   categoryId   String   // Kategori tujuan
-  targetSheetId String? // Opsional: Langsung arahkan ke sheet tertentu
   createdAt    DateTime @default(now())
 
   user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   category Category         @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  sheet    SheetConnection? @relation(fields: [targetSheetId], references: [id], onDelete: Cascade)
 }
 
 model SavingsGoal {
-  id              String   @id @default(uuid())
-  userId          String
-  name            String
-  targetAmount    Float
-  currentAmount   Float    @default(0)
-  deadline        DateTime?
-  isAutoSweep     Boolean  @default(false)
-  sweepPercentage Float?   // Contoh: 10 (berarti 10%)
-  createdAt       DateTime @default(now())
+  id            String    @id @default(uuid())
+  userId        String
+  name          String    
+  targetAmount  Float     
+  currentAmount Float     @default(0) 
+  deadline      DateTime? 
+  color         String?   @default("#10B981") 
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Baris ini adalah kunci untuk menghilangkan error P1012
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model WidgetPreference {
@@ -131,11 +132,27 @@ model WidgetPreference {
 model MagicFormula {
   id        String   @id @default(uuid())
   userId    String
-  sheetId   String
   cellRange String   // Contoh: "Sheet1!Z9"
   label     String   // Contoh: "Prediksi Sisa Modal"
   createdAt DateTime @default(now())
 
   user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sheet SheetConnection @relation(fields: [sheetId], references: [id], onDelete: Cascade)
 }
+
+model Budget {
+  id          String   @id @default(uuid())
+  userId      String
+  categoryId  String
+  amount      Float    
+  month       Int      
+  year        Int      
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  // Mencegah 1 kategori punya 2 anggaran di bulan & tahun yang sama
+  @@unique([userId, categoryId, month, year])
+}
+
