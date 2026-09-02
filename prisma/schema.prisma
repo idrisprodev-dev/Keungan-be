@@ -32,6 +32,8 @@ model User {
   id                 String   @id @default(uuid())
   email              String   @unique
   name               String
+  firstName          String?
+  lastName           String?
   picture            String?
   role               Role     @default(OWNER)
   ownerId            String?  // Jika role = EMPLOYEE, ini berisi ID Owner-nya
@@ -46,6 +48,8 @@ model User {
   whatsappNumber     String?  @unique // Nomor WA yang terhubung (bisa kosong dulu)
   waLinkingToken     String?  // Menyimpan kode unik sementara (misal: DOWITH-8842)
   waTokenExpiresAt   DateTime? // Batas waktu kadaluarsa kode unik (misal: 10 menit)
+  avatarUrl          String?
+  notifPrefs         NotificationPrefs?  // Preferensi notifikasi user (WA / Push / Reminder)
 
   owner           User?             @relation("EmployeeToOwner", fields: [ownerId], references: [id])
   employees       User[]            @relation("EmployeeToOwner")
@@ -55,6 +59,9 @@ model User {
   savingsGoals    SavingsGoal[]
   widgetPrefs     WidgetPreference[]
   magicFormulas   MagicFormula[]
+  notifications   Notification[]
+  pushSubscriptions PushSubscription[]
+
   
 }
 
@@ -154,5 +161,52 @@ model Budget {
 
   // Mencegah 1 kategori punya 2 anggaran di bulan & tahun yang sama
   @@unique([userId, categoryId, month, year])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      NotificationType @default(REMINDER)
+  title     String
+  message   String
+  data      Json?     // Payload opsional (mis. link, warna)
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+model NotificationPrefs {
+  id                String  @id @default(uuid())
+  userId            String  @unique
+  waEnabled         Boolean @default(true)
+  pushEnabled       Boolean @default(true)
+  dailyReminder     Boolean @default(true)
+  reminderTime      String  @default("20:00") // Format HH:mm waktu lokal user
+  lastReminderDate  DateTime? // Tanggal terakhir reminder harian dikirim (anti-duplikat)
+
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PushSubscription {
+  id             String   @id @default(uuid())
+  userId         String
+  endpoint       String   @unique
+  p256dh         String
+  auth           String
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum NotificationType {
+  REMINDER
+  BUDGET
+  GOAL
+  SYSTEM
+  WHATSAPP
 }
 

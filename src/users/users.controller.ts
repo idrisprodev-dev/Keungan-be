@@ -50,6 +50,21 @@ export class UsersController {
     }
   }
 
+  @Get('me')
+  @UseGuards(AuthGuard('jwt'))
+  async getProfile(@Req() req) {
+    const userId = this.extractUserId(req);
+    const result = await this.usersService.getProfile(userId);
+    console.log(`[CCTV GET /me] plan user di DB adalah: ${result?.data?.plan ?? 'UNKNOWN'}`);
+    return result;
+  }
+
+  @Patch('me')
+  @UseGuards(AuthGuard('jwt'))
+  async updateProfile(@Req() req, @Body() body: { firstName?: string; lastName?: string; name?: string }) {
+    const userId = this.extractUserId(req);
+    return this.usersService.updateProfile(userId, body);
+  }
 
   @Patch(':id')
   updateUser(
@@ -62,15 +77,6 @@ export class UsersController {
   @Delete(':id')
   deleteUser(@Param('id') id: string) {
     return this.usersService.deleteUser(id);
-  }
-
-  @Get('me')
-  @UseGuards(AuthGuard('jwt'))
-  async getProfile(@Req() req) {
-    const userId = this.extractUserId(req);
-    const result = await this.usersService.getProfile(userId);
-    console.log(`[CCTV GET /me] plan user di DB adalah: ${result?.data?.plan ?? 'UNKNOWN'}`);
-    return result;
   }
 
 }

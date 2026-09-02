@@ -28,9 +28,23 @@ export class PlanGuard implements CanActivate {
     }
 
     const planHierarchy = { FREE: 1, PRO: 2, PLATINUM: 3 };
-    
-    // Sekarang user.plan sudah aman dari error null / property missing
-    if (planHierarchy[user.plan] < planHierarchy[requiredPlan]) {
+
+    // ========================================================
+    // 🎁 LOGIKA TRIAL
+    // Selama masa trial aktif, user diperlakukan seperti PRO.
+    // Jika trial habis DAN tidak punya plan berbayar, turunkan ke FREE.
+    // ========================================================
+    let activePlan = user.plan;
+
+    if (user.plan === 'FREE') {
+      const now = new Date();
+      const trialActive = user.trialEndsAt && user.trialEndsAt > now;
+      if (trialActive) {
+        activePlan = 'PRO'; // Trial aktif -> fitur PRO dibuka
+      }
+    }
+
+    if (planHierarchy[activePlan] < planHierarchy[requiredPlan]) {
       throw new ForbiddenException(`Akses ditolak: Fitur ini membutuhkan paket ${requiredPlan}.`);
     }
 

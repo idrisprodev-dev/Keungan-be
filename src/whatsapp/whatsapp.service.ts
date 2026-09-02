@@ -366,4 +366,38 @@
     select: { name: true, email: true, whatsappNumber: true },
   });
 }
+
+    /**
+     * Kirim notifikasi WhatsApp ke user (dipakai oleh modul reminder / dashboard).
+     * Return object berisi status kirim.
+     */
+    async sendMessageToUser(userId: string, text: string) {
+        try {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { whatsappNumber: true, name: true },
+        });
+
+        if (!user?.whatsappNumber) {
+            return { status: 'skipped', reason: 'no-whatsapp-number' };
+        }
+
+        if (!this.sock?.user) {
+            return { status: 'skipped', reason: 'bot-not-connected' };
+        }
+
+        const jid = `${user.whatsappNumber}@s.whatsapp.net`;
+
+        try {
+            await this.sock.sendMessage(jid, { text });
+            return { status: 'sent' };
+        } catch (sendErr: any) {
+            this.logger.warn(`Gagal kirim WA ke ${user.whatsappNumber}: ${sendErr?.message}`);
+            return { status: 'failed', reason: sendErr?.message };
+        }
+        } catch (error) {
+        this.logger.error('sendMessageToUser error:', error);
+        return { status: 'failed', reason: 'internal-error' };
+        }
+    }
     }

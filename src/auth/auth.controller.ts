@@ -19,6 +19,15 @@ export class AuthController {
   async googleAuthRedirect(@Req() req, @Res() res) {
     const googleUser = req.user;
 
+    const fullName = googleUser.name || '';
+    const nameParts = fullName.trim().split(/\s+/);
+    const firstName = nameParts[0] || fullName;
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
+    // Set trial 30 hari untuk user baru (otomatis dibuat saat pertama kali login)
+    const trialEndsAt = new Date();
+    trialEndsAt.setDate(trialEndsAt.getDate() + 30);
+
     // 1. Cari atau buat User di Database (Upsert)
     const user = await this.prisma.user.upsert({
       where: { email: googleUser.email },
@@ -32,9 +41,13 @@ export class AuthController {
       create: {
         email: googleUser.email,
         name: googleUser.name,
+        firstName,
+        lastName,
         picture: googleUser.picture,
         googleAccessToken: googleUser.accessToken,
         googleRefreshToken: googleUser.refreshToken,
+        plan: 'FREE',
+        trialEndsAt,
       },
     });
 

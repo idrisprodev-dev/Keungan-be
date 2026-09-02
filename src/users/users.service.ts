@@ -99,10 +99,16 @@
         id: true,
         email: true,
         name: true,
+        firstName: true,
+        lastName: true,
         picture: true,
+        avatarUrl: true,
         role: true,
         createdAt: true,
         plan: true,
+        trialEndsAt: true,
+        subscriptionEndsAt: true,
+        whatsappNumber: true,
         // Kita tidak men-select data sensitif jika ada
       }
     });
@@ -111,7 +117,64 @@
       throw new NotFoundException('Data pengguna tidak ditemukan di dalam sistem.');
     }
 
-    return { status: 'success', data: user };
+    const now = new Date();
+    const trialEndsAt = user.trialEndsAt;
+    const isTrialActive = user.plan === 'FREE' && trialEndsAt != null && trialEndsAt > now;
+    const subscriptionActive = user.subscriptionEndsAt != null && user.subscriptionEndsAt > now;
+
+    return {
+      status: 'success',
+      data: {
+        ...user,
+        trial: {
+          isTrialActive,
+          hasTrial: trialEndsAt != null,
+          trialEndsAt,
+          daysLeft: trialEndsAt ? Math.max(0, Math.ceil((trialEndsAt.getTime() - now.getTime()) / 86400000)) : 0,
+          subscriptionActive,
+        },
+      },
+    };
+  }
+
+  async updateProfile(userId: string, data: { firstName?: string; lastName?: string; name?: string }) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Data pengguna tidak ditemukan di dalam sistem.');
+    }
+
+    const firstName = data.firstName ?? user.firstName ?? '';
+    const lastName = data.lastName ?? user.lastName ?? '';
+    const combinedName = [firstName, lastName].filter(Boolean).join(' ').trim();
+    const displayName = data.name ?? (combinedName || user.name);
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        firstName: data.firstName ?? user.firstName ?? null,
+        lastName: data.lastName ?? user.lastName ?? null,
+        name: displayName,
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        firstName: true,
+        lastName: true,
+        picture: true,
+        avatarUrl: true,
+        role: true,
+        createdAt: true,
+        plan: true,
+        trialEndsAt: true,
+        subscriptionEndsAt: true,
+      },
+    });
+
+    return { status: 'success', message: 'Profil berhasil diperbarui', data: updatedUser };
   }
   async updatePlan(userId: string, plan: string) {
     return await this.prisma.user.update({

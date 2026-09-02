@@ -10,6 +10,14 @@ export class AuthService {
   ) {}
 
   async validateOAuthLogin(userPayload: any) {
+    const fullName = userPayload.name || '';
+    const nameParts = fullName.trim().split(/\s+/);
+    const firstName = nameParts[0] || fullName;
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
+    const trialEndsAt = new Date();
+    trialEndsAt.setDate(trialEndsAt.getDate() + 30);
+
     // Upsert: Jika user sudah ada, perbarui token Google-nya. 
     // Jika belum ada, buat user baru beserta tokennya.
     const user = await this.prisma.user.upsert({
@@ -20,8 +28,12 @@ export class AuthService {
       create: {
         email: userPayload.email,
         name: userPayload.name,
+        firstName,
+        lastName,
         picture: userPayload.picture,
         googleAccessToken: userPayload.accessToken,
+        plan: 'FREE',
+        trialEndsAt,
         // Baris spreadsheetId telah dihapus karena menggunakan relasi SheetConnection
       },
     });
