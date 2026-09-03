@@ -31,20 +31,27 @@ import { NotificationsModule } from './notifications/notifications.module';
       useFactory: async () => {
         // Parsing REDIS_URL untuk menghubungkan ke Upstash (rediss://) dengan TLS
         const redisUrl = new URL(process.env.REDIS_URL || '');
-        return {
-          // Mengubah storage default menjadi Redis
-          store: await redisStore({
-            socket: {
-              host: redisUrl.hostname || process.env.REDIS_HOST || 'localhost',
-              port: redisUrl.port ? parseInt(redisUrl.port, 10) : parseInt(process.env.REDIS_PORT || '6379', 10),
-              // Upstash memerlukan TLS (rediss://)
-              tls: process.env.REDIS_URL?.startsWith('rediss') ? true : false,
-              rejectUnauthorized: false,
-            },
-            username: redisUrl.username || undefined,
-            password: redisUrl.password || undefined,
-          }),
-        };
+        const store = await redisStore({
+          socket: {
+            host: redisUrl.hostname || process.env.REDIS_HOST || 'localhost',
+            port: redisUrl.port ? parseInt(redisUrl.port, 10) : parseInt(process.env.REDIS_PORT || '6379', 10),
+            // Upstash memerlukan TLS (rediss://)
+            tls: process.env.REDIS_URL?.startsWith('rediss') ? true : false,
+            rejectUnauthorized: false,
+            reconnectStrategy: (retries) => (retries > 10 ? false : Math.min(retries * 500, 5000)),
+          },
+          username: redisUrl.username || undefined,
+          password: redisUrl.password || undefined,
+        });
+
+        // Jangan crash server saat Upstash me-reset koneksi idle (ECONNRESET).
+        // Client @redis memicu event 'error' yang tanpa listener akan melemparkan
+        // "Unhandled 'error' event" dan mematikan seluruh proses Node.
+        store.client?.on('error', (err: any) => {
+          console.warn('[Redis] Koneksi ter-reset, mencoba reconnect ulang:', err?.message || err);
+        });
+
+        return { store };
       },
     }),
    // 1. Konfigurasi Global BullMQ
@@ -54,6 +61,10 @@ import { NotificationsModule } from './notifications/notifications.module';
         // Konfigurasi wajib untuk menangani enkripsi TLS pada Upstash (rediss://)
         tls: {
           rejectUnauthorized: false,
+        },
+        reconnectOnError: (err) => {
+          console.warn('[BullMQ] Redis reconnectOnError:', err?.message || err);
+          return true; // coba reconnect ulang
         },
       },
    }),

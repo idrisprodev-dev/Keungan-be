@@ -1,7 +1,12 @@
-import { Controller, Get, Post, Put, Delete, Param, Body, Req } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Body, Req, UseGuards } from '@nestjs/common';
 import { GoalsService } from './goals.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
 
+// JwtAuthGuard: pastikan login. PlanStatusGuard: blokir mutasi (POST/PUT/DELETE)
+// saat user FREE (trial habis). GET tetap boleh (lihat riwayat).
 @Controller('goals')
+@UseGuards(JwtAuthGuard, PlanStatusGuard)
 export class GoalsController {
   constructor(private readonly goalsService: GoalsService) {}
 

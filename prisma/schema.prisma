@@ -5,7 +5,166 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL") // Opsional untuk Supabase
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id                 String             @id @default(uuid())
+  email              String             @unique
+  name               String
+  picture            String?
+  role               Role               @default(OWNER)
+  ownerId            String?
+  googleAccessToken  String?
+  googleRefreshToken String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  plan               PlanType           @default(FREE)
+  subscriptionEndsAt DateTime?
+  trialEndsAt        DateTime?
+  whatsappNumber     String?            @unique
+  waLinkingToken     String?
+  waTokenExpiresAt   DateTime?
+  avatarUrl          String?
+  firstName          String?
+  lastName           String?
+  budgets            Budget[]
+  categories         Category[]
+  magicFormulas      MagicFormula[]
+  notifications      Notification[]
+  notifPrefs         NotificationPrefs?
+  pushSubscriptions  PushSubscription[]
+  savingsGoals       SavingsGoal[]
+  smartRules         SmartRule[]
+  transactions       Transaction[]
+  owner              User?              @relation("EmployeeToOwner", fields: [ownerId], references: [id])
+  employees          User[]             @relation("EmployeeToOwner")
+  widgetPrefs        WidgetPreference[]
+}
+
+model Category {
+  id           String        @id @default(uuid())
+  userId       String
+  name         String
+  type         CategoryType
+  icon         String?
+  color        String?
+  createdAt    DateTime      @default(now())
+  budgets      Budget[]
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  smartRules   SmartRule[]
+  transactions Transaction[]
+}
+
+model Transaction {
+  id            String       @id @default(uuid())
+  userId        String
+  categoryId    String?
+  amount        Float
+  type          CategoryType @default(EXPENSE)
+  date          DateTime     @default(now())
+  description   String
+  paymentMethod String?
+  source        String?
+  createdAt     DateTime     @default(now())
+  category      Category?    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SmartRule {
+  id         String   @id @default(uuid())
+  userId     String
+  keyword    String
+  categoryId String
+  createdAt  DateTime @default(now())
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SavingsGoal {
+  id            String    @id @default(uuid())
+  userId        String
+  name          String
+  targetAmount  Float
+  currentAmount Float     @default(0)
+  deadline      DateTime?
+  createdAt     DateTime  @default(now())
+  color         String?   @default("#10B981")
+  updatedAt     DateTime  @updatedAt
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WidgetPreference {
+  id         String  @id @default(uuid())
+  userId     String
+  widgetName String
+  isVisible  Boolean @default(true)
+  orderIndex Int     @default(0)
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, widgetName])
+}
+
+model MagicFormula {
+  id        String   @id @default(uuid())
+  userId    String
+  cellRange String
+  label     String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Budget {
+  id         String   @id @default(uuid())
+  userId     String
+  categoryId String
+  amount     Float
+  month      Int
+  year       Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, categoryId, month, year])
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType @default(REMINDER)
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+model NotificationPrefs {
+  id               String    @id @default(uuid())
+  userId           String    @unique
+  waEnabled        Boolean   @default(true)
+  pushEnabled      Boolean   @default(true)
+  dailyReminder    Boolean   @default(true)
+  reminderTime     String    @default("20:00")
+  lastReminderDate DateTime?
+  lastNotifH1At    DateTime?
+  lastNotifH3At    DateTime?
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 enum Role {
@@ -18,188 +177,10 @@ enum CategoryType {
   EXPENSE
 }
 
-
-// Tambahkan Enum ini di luar model
 enum PlanType {
   FREE
   PRO
   PLATINUM
-}
-
-
-
-model User {
-  id                 String   @id @default(uuid())
-  email              String   @unique
-  name               String
-  firstName          String?
-  lastName           String?
-  picture            String?
-  role               Role     @default(OWNER)
-  ownerId            String?  // Jika role = EMPLOYEE, ini berisi ID Owner-nya
-  googleAccessToken  String?
-  googleRefreshToken String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-  budgets            Budget[]
-  plan               PlanType @default(FREE)
-  trialEndsAt        DateTime?
-  subscriptionEndsAt DateTime?
-  whatsappNumber     String?  @unique // Nomor WA yang terhubung (bisa kosong dulu)
-  waLinkingToken     String?  // Menyimpan kode unik sementara (misal: DOWITH-8842)
-  waTokenExpiresAt   DateTime? // Batas waktu kadaluarsa kode unik (misal: 10 menit)
-  avatarUrl          String?
-  notifPrefs         NotificationPrefs?  // Preferensi notifikasi user (WA / Push / Reminder)
-
-  owner           User?             @relation("EmployeeToOwner", fields: [ownerId], references: [id])
-  employees       User[]            @relation("EmployeeToOwner")
-  categories      Category[]
-  transactions    Transaction[]
-  smartRules      SmartRule[]
-  savingsGoals    SavingsGoal[]
-  widgetPrefs     WidgetPreference[]
-  magicFormulas   MagicFormula[]
-  notifications   Notification[]
-  pushSubscriptions PushSubscription[]
-
-  
-}
-
-
-model Category {
-  id        String       @id @default(uuid())
-  userId    String
-  name      String
-  type      CategoryType
-  icon      String?
-  color     String?
-  createdAt DateTime     @default(now())
-  budgets   Budget[]
-  
-
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions Transaction[]
-  smartRules   SmartRule[]
-}
-
-model Transaction {
-  id            String       @id @default(uuid())
-  userId        String
-  categoryId    String?      // 👈 Beri tanda tanya agar tidak wajib saat input via WA
-  amount        Float        // Skema kamu menggunakan Float, pastikan tipe data aman
-  type          CategoryType @default(EXPENSE) // 👈 Beri default 'EXPENSE' (Pengeluaran)
-  date          DateTime     @default(now())   // 👈 Beri default tanggal hari ini
-  description   String
-  paymentMethod String?      
-  source        String?      // Bisa diisi "WA_BOT" nanti
-  createdAt     DateTime     @default(now())
-
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  category      Category?    @relation(fields: [categoryId], references: [id], onDelete: Cascade) // 👈 Beri tanda tanya juga di relasinya
-}
-
-model SmartRule {
-  id           String   @id @default(uuid())
-  userId       String
-  keyword      String   // Contoh: "Grab"
-  categoryId   String   // Kategori tujuan
-  createdAt    DateTime @default(now())
-
-  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  category Category         @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-}
-
-model SavingsGoal {
-  id            String    @id @default(uuid())
-  userId        String
-  name          String    
-  targetAmount  Float     
-  currentAmount Float     @default(0) 
-  deadline      DateTime? 
-  color         String?   @default("#10B981") 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  // Baris ini adalah kunci untuk menghilangkan error P1012
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model WidgetPreference {
-  id         String  @id @default(uuid())
-  userId     String
-  widgetName String  // Contoh: "Balance", "Income", "Recent Transaction"
-  isVisible  Boolean @default(true)
-  orderIndex Int     @default(0)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, widgetName])
-}
-
-model MagicFormula {
-  id        String   @id @default(uuid())
-  userId    String
-  cellRange String   // Contoh: "Sheet1!Z9"
-  label     String   // Contoh: "Prediksi Sisa Modal"
-  createdAt DateTime @default(now())
-
-  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model Budget {
-  id          String   @id @default(uuid())
-  userId      String
-  categoryId  String
-  amount      Float    
-  month       Int      
-  year        Int      
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-
-  // Mencegah 1 kategori punya 2 anggaran di bulan & tahun yang sama
-  @@unique([userId, categoryId, month, year])
-}
-
-model Notification {
-  id        String   @id @default(uuid())
-  userId    String
-  type      NotificationType @default(REMINDER)
-  title     String
-  message   String
-  data      Json?     // Payload opsional (mis. link, warna)
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, isRead])
-}
-
-model NotificationPrefs {
-  id                String  @id @default(uuid())
-  userId            String  @unique
-  waEnabled         Boolean @default(true)
-  pushEnabled       Boolean @default(true)
-  dailyReminder     Boolean @default(true)
-  reminderTime      String  @default("20:00") // Format HH:mm waktu lokal user
-  lastReminderDate  DateTime? // Tanggal terakhir reminder harian dikirim (anti-duplikat)
-
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model PushSubscription {
-  id             String   @id @default(uuid())
-  userId         String
-  endpoint       String   @unique
-  p256dh         String
-  auth           String
-  userAgent      String?
-  createdAt      DateTime @default(now())
-
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 enum NotificationType {
@@ -209,4 +190,3 @@ enum NotificationType {
   SYSTEM
   WHATSAPP
 }
-

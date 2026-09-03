@@ -3,9 +3,13 @@ import { TransactionsService } from './transactions.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { IdempotencyInterceptor } from '../common/interceptors/idempotency.interceptor';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
 
+// JwtAuthGuard: pastikan user sudah login (token valid).
+// PlanStatusGuard: blokir POST/PUT/DELETE saat user FREE (trial/langganan habis),
+// tetapi tetap izinkan GET (read-only) agar riwayat data tetap terlihat.
 @Controller('transactions')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PlanStatusGuard)
 export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}
 

@@ -5,6 +5,10 @@ import { NotificationsController } from './notifications.controller';
 import { WebPushService } from './web-push.service';
 import { WebPushController } from './web-push.controller';
 import { DailyReminderService, DAILY_REMINDER_QUEUE } from './daily-reminder.service';
+import {
+  SubscriptionReminderService,
+  SUBSCRIPTION_REMINDER_QUEUE,
+} from './subscription-reminder.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 
@@ -13,10 +17,18 @@ import { WhatsappModule } from '../whatsapp/whatsapp.module';
   imports: [
     PrismaModule,
     WhatsappModule,
-    BullModule.registerQueue({ name: DAILY_REMINDER_QUEUE }),
+    BullModule.registerQueue(
+      { name: DAILY_REMINDER_QUEUE },
+      { name: SUBSCRIPTION_REMINDER_QUEUE },
+    ),
   ],
   controllers: [NotificationsController, WebPushController],
-  providers: [NotificationsService, WebPushService, DailyReminderService],
-  exports: [NotificationsService, WebPushService],
+  providers: [
+    NotificationsService,
+    WebPushService,
+    DailyReminderService,
+    SubscriptionReminderService,
+  ],
+  exports: [NotificationsService, WebPushService, SubscriptionReminderService],
 })
 export class NotificationsModule {}

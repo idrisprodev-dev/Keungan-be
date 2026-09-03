@@ -1,8 +1,9 @@
 import { Controller, Post, Delete, Get, Body, Req, UseGuards, Headers } from '@nestjs/common';
 import { WebPushService } from './web-push.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Public } from '../auth/decorators/public.decorator';
 
-@Controller('push')
+@Controller(['push', 'notifications'])
 @UseGuards(JwtAuthGuard)
 export class WebPushController {
   constructor(private readonly webPushService: WebPushService) {}
@@ -11,6 +12,9 @@ export class WebPushController {
     return req.user?.id || req.user?.userId || req.user?.sub;
   }
 
+  // Public key web push bersifat publik (bukan data sensitif).
+  // Dibutuhkan frontend SEBELUM ada token/jwt untuk membuat subscription.
+  @Public()
   @Get('public-key')
   getPublicKey() {
     return this.webPushService.getPublicKey();
@@ -19,11 +23,12 @@ export class WebPushController {
   @Post('subscribe')
   async subscribe(
     @Req() req: any,
-    @Body() body: { subscription: { endpoint: string; keys: { p256dh: string; auth: string } } },
+    @Body() body: any,
     @Headers('user-agent') userAgent?: string,
   ) {
     const userId = this.extractUserId(req);
-    return this.webPushService.subscribe(userId, body.subscription, userAgent);
+    const subscription = body?.subscription ?? body;
+    return this.webPushService.subscribe(userId, subscription, userAgent);
   }
 
   @Delete('unsubscribe')

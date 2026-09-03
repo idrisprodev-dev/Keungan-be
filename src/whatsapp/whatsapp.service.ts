@@ -95,6 +95,32 @@
             const textLower = messageText.toLowerCase().trim();
 
             // ========================================================
+            // 🚫 READ-ONLY CHECK
+            // User PRO/PLATINUM dengan subscription expired TIDAK boleh
+            // melakukan operasi penulisan lewat WhatsApp (catat transaksi,
+            // undo). Hanya boleh baca (ping, saldo/laporan).
+            // ========================================================
+            const nowReadonly = new Date();
+            const isPaidPlanWA =
+              user.plan === 'PRO' || user.plan === 'PLATINUM';
+            const subExpiredWA =
+              isPaidPlanWA &&
+              user.subscriptionEndsAt != null &&
+              user.subscriptionEndsAt <= nowReadonly;
+
+            const isWriteCommand =
+              textLower !== 'dowith ping' &&
+              textLower !== 'dowith saldo' &&
+              textLower !== 'dowith laporan';
+
+            if (subExpiredWA && isWriteCommand) {
+              await this.sock.sendMessage(senderID, {
+                text: `❌ *Akses Ditolak*\n\nHalo ${user.name}, langganan Dowith.id kamu sudah berakhir. Perbarui langgananmu untuk kembali mencatat transaksi. Data lama tetap bisa kamu lihat via aplikasi.`,
+              });
+              return;
+            }
+
+            // ========================================================
             // 🌟 FITUR 1: CEK STATUS BOT (PING)
             // ========================================================
             if (textLower === 'dowith ping') {
@@ -189,6 +215,20 @@
             }
 
             // ========================================================
+            // 🎯 PEMBELAJARAN PAKET: Tentukan "effective plan" user
+            // Trial aktif (plan FREE + trialEndsAt belum lewat) => akses
+            // diperlakukan seperti maksimal (PLATINUM) selama promo berjalan.
+            // ========================================================
+            const nowPlan = new Date();
+            const trialActiveWA = user.plan === 'FREE' && user.trialEndsAt != null && user.trialEndsAt > nowPlan;
+            let effectivePlan =
+              user.plan === 'PRO' || user.plan === 'PLATINUM'
+                ? user.plan
+                : trialActiveWA
+                  ? 'PLATINUM'
+                  : 'FREE';
+
+            // ========================================================
             // 🌟 FITUR 4: PENCATATAN TRANSAKSI + BUDGET ALERT
             // ========================================================
             const commandText = messageText.substring(6).trim(); 
@@ -249,6 +289,29 @@
             }
 
             // 2. Simpan Transaksi ke Database
+            // -------------------------------------------
+            // 🔒 LIMIT PAKET PRO: maksimal 50 pencatatan via WA per bulan.
+            // Platinum / trial (PLATINUM) / FREE read-only tidak kena limit sendiri
+            // (FREE read-only sudah diblokir di tempat lain). Pro dibatasi 50/bulan.
+            if (effectivePlan === 'PRO') {
+              const waNow = new Date();
+              const waStart = new Date(waNow.getFullYear(), waNow.getMonth(), 1);
+              const waEnd = new Date(waNow.getFullYear(), waNow.getMonth() + 1, 0, 23, 59, 59, 999);
+              const waCount = await this.prisma.transaction.count({
+                where: {
+                  userId: user.id,
+                  source: 'WA_BOT',
+                  createdAt: { gte: waStart, lte: waEnd },
+                },
+              });
+              if (waCount >= 50) {
+                await this.sock.sendMessage(senderID, {
+                  text: `❌ *Batas Pencatatan WA Bulan Ini Tercapai!*\n\nKamu sudah mencatat *50 transaksi* lewat WhatsApp di bulan ini untuk paket Pro. Silakan upgrade ke *Platinum* untuk pencatatan tanpa batas, atau gunakan aplikasi untuk mencatat transaksi lainnya.`,
+                });
+                return;
+              }
+            }
+
             await this.prisma.transaction.create({
                 data: {
                 description: description,

@@ -1,9 +1,12 @@
 import { Controller, Get, Post, Delete, Body, Req, UseGuards, Query, Param, UnauthorizedException, Put } from '@nestjs/common';
 import { BudgetsService } from './budgets.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
 import { UpdateBudgetDto } from './dto/create-budget.dto';
 
-@UseGuards(JwtAuthGuard)
+// JwtAuthGuard: pastikan login. PlanStatusGuard: blokir mutasi (POST/PUT/DELETE)
+// saat user FREE (trial habis = read-only). GET tetap diizinkan.
+@UseGuards(JwtAuthGuard, PlanStatusGuard)
 @Controller('budgets')
 export class BudgetsController {
   constructor(private readonly budgetsService: BudgetsService) {}

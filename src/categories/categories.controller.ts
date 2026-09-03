@@ -1,9 +1,14 @@
-import { Controller, Get, Post, Put, Delete, Param, Body, Req } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Body, Req, UseGuards } from '@nestjs/common';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
 
+// JwtAuthGuard: pastikan login. PlanStatusGuard: blokir mutasi (POST/PUT/DELETE)
+// saat user FREE (trial habis = read-only). GET tetap diizinkan.
 @Controller('categories')
+@UseGuards(JwtAuthGuard, PlanStatusGuard)
 export class CategoriesController {
   constructor(private readonly categoriesService: CategoriesService) {}
 

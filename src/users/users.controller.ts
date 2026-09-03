@@ -26,7 +26,7 @@ export class UsersController {
   }
 
     @Patch('dev-update-plan')
-  async updatePlan(@Req() req, @Body() body: { plan: string }) {
+  async updatePlan(@Req() req, @Body() body: { plan: string; days?: number }) {
     const userId = this.extractUserId(req);
     const targetPlan = body.plan as PlanType;
 
@@ -34,18 +34,19 @@ export class UsersController {
       throw new UnauthorizedException('Plan tidak valid. Gunakan: FREE, PRO, atau PLATINUM');
     }
 
-    console.log(`[CCTV PATCH] Mengubah plan user ${userId} menjadi: ${targetPlan}`);
-
     try {
-      const updatedUser = await this.usersService.updatePlan(userId, targetPlan);
-      console.log(`[CCTV PATCH] SUKSES! Plan diubah ke: ${updatedUser.plan}`);
+      const updatedUser = await this.usersService.updatePlan(userId, targetPlan, body.days);
       return {
         success: true,
-        message: `Plan berhasil diubah menjadi ${targetPlan}`,
-        data: updatedUser,
+        message: body.days && targetPlan === 'FREE'
+          ? `Plan FREE + trial diperpanjang ${body.days} hari. Trial berakhir ${updatedUser.trialEndsAt}`
+          : `Plan berhasil diubah menjadi ${targetPlan}`,
+        data: {
+          plan: updatedUser.plan,
+          trialEndsAt: updatedUser.trialEndsAt,
+        },
       };
     } catch (error: any) {
-      console.log(`[CCTV PATCH] GAGAL UPDATE DATABASE:`, error.message);
       throw new InternalServerErrorException('Gagal mengubah plan di database');
     }
   }

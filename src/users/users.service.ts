@@ -122,10 +122,24 @@
     const isTrialActive = user.plan === 'FREE' && trialEndsAt != null && trialEndsAt > now;
     const subscriptionActive = user.subscriptionEndsAt != null && user.subscriptionEndsAt > now;
 
+    // User berbayar (PRO/PLATINUM) yang subscription-nya sudah expired => READ-ONLY
+    const isPaidPlan = user.plan === 'PRO' || user.plan === 'PLATINUM';
+    const subscriptionExpired = isPaidPlan && user.subscriptionEndsAt != null && user.subscriptionEndsAt <= now;
+    const isReadOnly = subscriptionExpired || (!isPaidPlan && !isTrialActive);
+
     return {
       status: 'success',
       data: {
         ...user,
+        subscription: {
+          subscriptionEndsAt: user.subscriptionEndsAt,
+          subscriptionActive,
+          subscriptionExpired,
+          daysLeft: user.subscriptionEndsAt
+            ? Math.max(0, Math.ceil((user.subscriptionEndsAt.getTime() - now.getTime()) / 86400000))
+            : null,
+          isReadOnly,
+        },
         trial: {
           isTrialActive,
           hasTrial: trialEndsAt != null,
@@ -176,10 +190,18 @@
 
     return { status: 'success', message: 'Profil berhasil diperbarui', data: updatedUser };
   }
-  async updatePlan(userId: string, plan: string) {
+  async updatePlan(userId: string, plan: string, days?: number) {
+    // Jika plan FREE dan ada parameter `days`, perpanjang trialEndsAt dari hari ini
+    // (untuk keperluan testing/dev). Contoh: PATCH /users/dev-update-plan { plan:'FREE', days: 3 }
+    const data: any = { plan: plan as any };
+    if (plan === 'FREE' && days && days > 0) {
+      const trialEndsAt = new Date();
+      trialEndsAt.setHours(trialEndsAt.getHours() + days * 24);
+      data.trialEndsAt = trialEndsAt;
+    }
     return await this.prisma.user.update({
       where: { id: userId },
-      data: { plan: plan as any },
+      data,
     });
   }
 }

@@ -30,14 +30,24 @@ export class PlanGuard implements CanActivate {
     const planHierarchy = { FREE: 1, PRO: 2, PLATINUM: 3 };
 
     // ========================================================
-    // 🎁 LOGIKA TRIAL
-    // Selama masa trial aktif, user diperlakukan seperti PRO.
-    // Jika trial habis DAN tidak punya plan berbayar, turunkan ke FREE.
+    // 🎁 LOGIKA TRIAL & SUBSCRIPTION
+    // - Selama masa trial aktif, user FREE diperlakukan seperti PRO.
+    // - Jika SUBSCRIPTION user PRO/PLATINUM sudah expired, turunkan
+    //   menjadi FREE (tidak bisa akses fitur PRO/PLATINUM).
+    // - Jika trial habis DAN tidak punya plan berbayar, turunkan ke FREE.
     // ========================================================
     let activePlan = user.plan;
+    const now = new Date();
 
-    if (user.plan === 'FREE') {
-      const now = new Date();
+    // User PRO/PLATINUM dengan subscription expired => downgrade ke FREE
+    const isPaidPlan = user.plan === 'PRO' || user.plan === 'PLATINUM';
+    const subscriptionExpired = isPaidPlan && user.subscriptionEndsAt != null && user.subscriptionEndsAt <= now;
+
+    if (subscriptionExpired) {
+      activePlan = 'FREE';
+    }
+
+    if (activePlan === 'FREE') {
       const trialActive = user.trialEndsAt && user.trialEndsAt > now;
       if (trialActive) {
         activePlan = 'PRO'; // Trial aktif -> fitur PRO dibuka

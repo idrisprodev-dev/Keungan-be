@@ -4,15 +4,18 @@ import { RequirePlan } from '../auth/decorators/require-plan.decorator';
 import { PlanGuard } from '../auth/guards/plan.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
+// Fitur lanjutan: SELURUH akses (termasuk GET) ke Smart Rules
+// hanya boleh untuk user PRO/PLATINUM. Guard ini akan menolak akses
+// (403 Forbidden) bagi user FREE / trial yang sudah habis.
 @Controller('smart-rules')
+@UseGuards(JwtAuthGuard, PlanGuard)
+@RequirePlan('PRO')
 export class SmartRulesController {
   constructor(private readonly smartRulesService: SmartRulesService) {}
 
 
 
     @Post()
-    @UseGuards(JwtAuthGuard, PlanGuard) // 1. Pasang Guard
-   @RequirePlan('PRO')// 2. Tentukan minimal level PLAN
   async create(@Body() body: { keyword: string; categoryId: string; targetSheetId?: string }, @Req() req: any) {
     const userId = req.user?.userId || req.user?.sub || body['userId']; 
     if (!userId) throw new Error('Unauthorized');
