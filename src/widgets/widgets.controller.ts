@@ -1,7 +1,9 @@
-import { Controller, Get, Put, Body, Req } from '@nestjs/common';
+import { Controller, Get, Put, Body, Req, UseGuards } from '@nestjs/common';
 import { WidgetsService } from './widgets.service';
+import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
 
 @Controller('widgets')
+@UseGuards(PlanStatusGuard)
 export class WidgetsController {
   constructor(private readonly widgetsService: WidgetsService) {}
 

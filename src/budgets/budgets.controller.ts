@@ -4,8 +4,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
 import { UpdateBudgetDto } from './dto/create-budget.dto';
 
-// JwtAuthGuard: pastikan login. PlanStatusGuard: blokir mutasi (POST/PUT/DELETE)
-// saat user FREE (trial habis = read-only). GET tetap diizinkan.
+// JwtAuthGuard: pastikan login. PlanStatusGuard: blokir mutasi saat expired.
 @UseGuards(JwtAuthGuard, PlanStatusGuard)
 @Controller('budgets')
 export class BudgetsController {

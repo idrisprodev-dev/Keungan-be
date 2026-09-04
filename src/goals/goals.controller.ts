@@ -3,8 +3,7 @@ import { GoalsService } from './goals.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
 
-// JwtAuthGuard: pastikan login. PlanStatusGuard: blokir mutasi (POST/PUT/DELETE)
-// saat user FREE (trial habis). GET tetap boleh (lihat riwayat).
+// JwtAuthGuard: pastikan login. PlanStatusGuard: blokir mutasi saat expired.
 @Controller('goals')
 @UseGuards(JwtAuthGuard, PlanStatusGuard)
 export class GoalsController {

@@ -2,6 +2,7 @@ import { Controller, Get, Post, Req, Res, Query, HttpStatus, UseGuards, Unauthor
 import * as express from 'express';
 import { WhatsappService } from './whatsapp.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
 
 @Controller('whatsapp')
 export class WhatsappController {
@@ -67,7 +68,7 @@ export class WhatsappController {
   }
 
   @Post('generate-link')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanStatusGuard)
   async generateLink(@Req() req) {
     // Menggunakan fallback untuk mencegah id bernilai undefined
     const userId = req.user?.id || req.user?.sub || req.user?.userId;

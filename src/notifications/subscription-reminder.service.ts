@@ -9,23 +9,34 @@ import { WebPushService } from './web-push.service';
 export const SUBSCRIPTION_REMINDER_QUEUE = 'subscription-reminder';
 export const SUBSCRIPTION_REMINDER_JOB = 'check-subscription-expiry';
 
+// Jam (waktu lokal server) di HARI TERAKHIR saat reminder upgrade dikirim.
+// Setelah jam ini lewat, user PRO/PLATINUM yang subscription-nya habis
+// sudah dalam status READ-ONLY (ditegakkan oleh PlanStatusGuard).
+export const EXPIRY_REMINDER_HOUR = 13;
+
 /**
- * Service yang menjalankan cron job untuk:
- * 1. Mengirim notifikasi H-3 (3 hari sebelum subscription habis)
- * 2. Mengirim notifikasi H-1 (1 hari sebelum subscription habis)
- * 3. Menandai user sebagai READ-ONLY jika subscription sudah expired
+ * Service yang menjalankan cron job untuk subscription reminder.
+ *
+ * Spesifikasi:
+ *   - PRO/PLATINUM (bulanan/tahunan): reminder "upgrade" dikirim pada HARI TERAKHIR
+ *     langganan (subscriptionEndsAt jatuh hari ini) setelah jam 13:00.
+ *     Setelah jam 13:00 lewat, user tidak bisa melakukan apa-apa (READ-ONLY) — hanya
+ *     mendapat reminder untuk upgrade.
+ *   - FREE trial: kirim notif H-1 (1 hari sebelum trialEndsAt habis).
+ *   - Tidak ada notifikasi H-3.
  *
  * Strategi timezone:
- *   Kita menggunakan "UTC date truncation" untuk menghitung sisa hari.
- *   Keduanya (now dan subscriptionEndsAt) ditruncate ke start-of-day UTC
- *   sehingga hasilnya konsisten tanpa dependensi timezone user.
+ *   - Perhitungan "jatuh hari ini" pakai UTC date truncation agar konsisten.
+ *   - Batas jam 13:00 memakai waktu lokal server (zona tempat deploy).
  *
  * Strategi idempotensi:
- *   Setiap notifikasi (H-3, H-1) ditandai timestamp kirimnya di
- *   NotificationPrefs.lastNotifH3At / lastNotifH1At.
- *   Sebelum mengirim, dicek apakah sudah dikirim hari ini (isSameDay).
- *   Ini memastikan meskipun cron berjalan berkali-kali dalam sehari,
- *   notifikasi hanya terkirim 1x per tipe per user.
+ *   - Kiri terakhir ditandai di NotificationPrefs.lastNotifH1At. Sebelum mengirim,
+ *     dicek sudah terkirim hari ini (isSameDay) -> hanya 1x per hari per user.
+ *
+ * READ-ONLY enforcement (PRO/PLATINUM expired):
+ *   - Tidak dilakukan di cron. Ditangani real-time oleh PlanStatusGuard:
+ *     jika subscriptionEndsAt <= now, semua mutasi (POST/PUT/PATCH/DELETE) diblokir,
+ *     GET tetap diizinkan. Ini otomatis tanpa perlu flag DB.
  */
 @Processor(SUBSCRIPTION_REMINDER_QUEUE)
 @Injectable()
@@ -57,7 +68,7 @@ export class SubscriptionReminderService
       },
     );
     this.logger.log(
-      `Subscription reminder dijadwalkan setiap jam (cron: ${cron}).`,
+      `Subscription reminder (PRO/Platinum hari-terakhir jam ${EXPIRY_REMINDER_HOUR}.00, trial H-1) dijadwalkan tiap jam (cron: ${cron}).`,
     );
   }
 
@@ -67,6 +78,8 @@ export class SubscriptionReminderService
     const now = new Date();
     const todayStart = this.startOfDayUTC(now);
     const todayEnd = this.endOfDayUTC(now);
+    // Batas atas tanggal habis yang relevan (besok = +1 hari) untuk trial H-1
+    const maxRelevantDate = new Date(todayStart.getTime() + 1 * 86400000);
 
     // Batch size untuk handle jutaan user (menghindari OOM)
     const BATCH_SIZE = 500;
@@ -74,25 +87,29 @@ export class SubscriptionReminderService
     let totalProcessed = 0;
 
     while (true) {
-      // Ambil user dengan plan PRO/PLATINUM yang punya subscriptionEndsAt
-      // dan subscription masih dalam rentang yang relevan (max 4 hari ke depan atau sudah expired)
-      const maxRelevantDate = new Date(todayStart.getTime() + 4 * 86400000); // 4 hari ke depan
-
+      // Ambil semua user yang relevan:
+      //   A) FREE trial berakhir besok (H-1)
+      //   B) PRO/PLATINUM subscription berakhir hari ini (utk notif jam 13:00)
       const users = await this.prisma.user.findMany({
         where: {
-          plan: { in: ['PRO', 'PLATINUM'] },
-          subscriptionEndsAt: { not: null },
           OR: [
-            // Belum expired, max 4 hari lagi (untuk H-3, H-1)
-            { subscriptionEndsAt: { gt: now, lte: maxRelevantDate } },
-            // Sudah expired tapi masih hari ini (untuk flagging read-only sekali)
-            { subscriptionEndsAt: { gte: todayStart, lte: todayEnd } },
+            // A) FREE trial berakhir besok (H-1)
+            {
+              plan: 'FREE',
+              trialEndsAt: { not: null, gt: now, lte: maxRelevantDate },
+            },
+            // B) PRO/PLATINUM subscription berakhir HARI INI
+            {
+              plan: { in: ['PRO', 'PLATINUM'] },
+              subscriptionEndsAt: { not: null, gte: todayStart, lte: todayEnd },
+            },
           ],
         },
         select: {
           id: true,
           name: true,
           plan: true,
+          trialEndsAt: true,
           subscriptionEndsAt: true,
           whatsappNumber: true,
           notifPrefs: true,
@@ -105,19 +122,7 @@ export class SubscriptionReminderService
 
       for (const user of users) {
         try {
-          if (!user.subscriptionEndsAt) continue;
-
-          const daysLeft = this.calculateDaysLeft(now, user.subscriptionEndsAt);
-
-          // === NOTIFIKASI H-3 ===
-          if (daysLeft === 3) {
-            await this.sendH3Notification(user, now);
-          }
-
-          // === NOTIFIKASI H-1 ===
-          if (daysLeft === 1) {
-            await this.sendH1Notification(user, now);
-          }
+          await this.processUser(user, now);
         } catch (err) {
           this.logger.error(
             `Gagal memproses subscription reminder untuk user ${user.id}: ${err}`,
@@ -127,7 +132,6 @@ export class SubscriptionReminderService
 
       totalProcessed += users.length;
 
-      // Jika batch kurang dari BATCH_SIZE, berarti sudah habis
       if (users.length < BATCH_SIZE) break;
 
       offset += BATCH_SIZE;
@@ -139,21 +143,72 @@ export class SubscriptionReminderService
     return { processed: totalProcessed };
   }
 
+  private async processUser(
+    user: {
+      id: string;
+      name: string;
+      plan: string;
+      trialEndsAt: Date | null;
+      subscriptionEndsAt: Date | null;
+      whatsappNumber: string | null;
+      notifPrefs: {
+        lastNotifH1At: Date | null;
+        waEnabled: boolean;
+        pushEnabled: boolean;
+      } | null;
+    },
+    now: Date,
+  ) {
+    if (user.plan === 'FREE') {
+      // --- TRIAL FREE: H-1 (besok) ---
+      if (
+        user.trialEndsAt &&
+        this.calculateDaysLeft(now, user.trialEndsAt) === 1
+      ) {
+        await this.sendTrialExpiryReminder(user, now);
+      }
+      return;
+    }
+
+    // --- PRO / PLATINUM ---
+    if (!user.subscriptionEndsAt) return;
+
+    const isExpiryToday = this.isSameDay(user.subscriptionEndsAt, now);
+
+    // Notif reminder upgrade hanya jika subscription HABIS HARI INI
+    // DAN sekarang sudah lewat jam 13:00 (EXPIRY_REMINDER_HOUR) waktu lokal.
+    if (isExpiryToday && this.isPastExpiryReminderHour(now)) {
+      await this.sendPaidExpiryReminder(user, now);
+    }
+  }
+
   /**
-   * Hitung sisa hari antara sekarang dan subscriptionEndsAt.
+   * Hitung sisa hari antara sekarang dan tanggal habis (trial/subscription).
    * Menggunakan UTC date truncation agar akurat tanpa dependensi timezone.
-   *
-   * Contoh:
-   *   now = 2025-09-03T23:00:00Z, endsAt = 2025-09-06T01:00:00Z
-   *   daysLeft = ceil((Sep6 - Sep3) / 86400000) = 3 ✓
-   *
-   *   now = 2025-09-03T00:00:00Z, endsAt = 2025-09-06T00:00:00Z
-   *   daysLeft = ceil((Sep6 - Sep3) / 86400000) = 3 ✓
+   * 0 = hibis hari ini, 1 = besok, dst.
    */
-  private calculateDaysLeft(now: Date, subscriptionEndsAt: Date): number {
+  private calculateDaysLeft(now: Date, expiryDate: Date): number {
     const nowDay = this.startOfDayUTC(now).getTime();
-    const endDay = this.startOfDayUTC(subscriptionEndsAt).getTime();
+    const endDay = this.startOfDayUTC(expiryDate).getTime();
     return Math.ceil((endDay - nowDay) / 86400000);
+  }
+
+  /**
+   * Apakah sekarang sudah lewat jam 13:00 (waktu lokal server)?
+   * Jika ya, user PRO/PLATINUM yang subscription-nya habis hari ini
+   * dianggap READ-ONLY (didukung guard) dan mendapat reminder upgrade.
+   */
+  private isPastExpiryReminderHour(now: Date): boolean {
+    const cutoff = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      EXPIRY_REMINDER_HOUR,
+      0,
+      0,
+      0,
+    );
+    return now.getTime() >= cutoff.getTime();
   }
 
   private startOfDayUTC(date: Date): Date {
@@ -186,7 +241,7 @@ export class SubscriptionReminderService
 
   /**
    * Cek apakah timestamp notifikasi terakhir sudah terjadi hari ini.
-   * Ini mencegah notifikasi ganda jika cron berjalan berkali-kali dalam sehari.
+   * Mencegah notifikasi ganda jika cron berjalan berkali-kali dalam sehari.
    */
   private alreadySentToday(
     lastSentAt: Date | null | undefined,
@@ -205,81 +260,13 @@ export class SubscriptionReminderService
   }
 
   /**
-   * Kirim notifikasi H-3: "Langganan [Pro/Platinum] Anda habis 3 hari lagi."
+   * Notif H-1 untuk user FREE dengan trial habis besok.
    */
-  private async sendH3Notification(
+  private async sendTrialExpiryReminder(
     user: {
       id: string;
       name: string;
       plan: string;
-      subscriptionEndsAt: Date | null;
-      whatsappNumber: string | null;
-      notifPrefs: {
-        lastNotifH3At: Date | null;
-        waEnabled: boolean;
-        pushEnabled: boolean;
-      } | null;
-    },
-    now: Date,
-  ) {
-    // Cek idempotensi: sudah dikirim hari ini?
-    if (this.alreadySentToday(user.notifPrefs?.lastNotifH3At, now)) {
-      this.logger.debug(
-        `Notifikasi H-3 untuk user ${user.id} sudah dikirim hari ini. Skip.`,
-      );
-      return;
-    }
-
-    const planLabel = user.plan === 'PLATINUM' ? 'Platinum' : 'Pro';
-    const message = `Langganan ${planLabel} Anda habis 3 hari lagi.`;
-
-    this.logger.log(
-      `Mengirim notifikasi H-3 ke user ${user.id} (${planLabel})`,
-    );
-
-    // 1. In-app notification
-    await this.notificationsService.create({
-      userId: user.id,
-      type: 'SYSTEM',
-      title: 'Pengingat Langganan',
-      message,
-      data: { type: 'SUBSCRIPTION_H3', daysLeft: 3, plan: user.plan },
-    });
-
-    // 2. Web Push (jika aktif)
-    if (user.notifPrefs?.pushEnabled) {
-      await this.webPushService.sendToUser(user.id, {
-        title: 'Pengingat Langganan',
-        body: message,
-        url: '/settings/subscription',
-      });
-    }
-
-    // 3. WhatsApp (jika aktif & punya nomor)
-    if (user.notifPrefs?.waEnabled && user.whatsappNumber) {
-      await this.whatsappService.sendMessageToUser(
-        user.id,
-        `🔔 *Pengingat Langganan Dowith.id*\n\n${message}\n\nSegera perpanjang agar fitur tetap aktif.`,
-      );
-    }
-
-    // Tandai sudah dikirim (update timestamp)
-    await this.prisma.notificationPrefs.upsert({
-      where: { userId: user.id },
-      update: { lastNotifH3At: now },
-      create: { userId: user.id, lastNotifH3At: now },
-    });
-  }
-
-  /**
-   * Kirim notifikasi H-1: "Besok langganan habis! Perbarui sekarang agar Smart Rules & WhatsApp AI tetap aktif."
-   */
-  private async sendH1Notification(
-    user: {
-      id: string;
-      name: string;
-      plan: string;
-      subscriptionEndsAt: Date | null;
       whatsappNumber: string | null;
       notifPrefs: {
         lastNotifH1At: Date | null;
@@ -289,33 +276,96 @@ export class SubscriptionReminderService
     },
     now: Date,
   ) {
-    // Cek idempotensi: sudah dikirim hari ini?
     if (this.alreadySentToday(user.notifPrefs?.lastNotifH1At, now)) {
       this.logger.debug(
-        `Notifikasi H-1 untuk user ${user.id} sudah dikirim hari ini. Skip.`,
+        `Notifikasi trial H-1 untuk user ${user.id} sudah dikirim hari ini. Skip.`,
       );
       return;
     }
 
+    const title = 'Akses Trial Habis Besok!';
     const message =
-      'Besok langganan habis! Perbarui sekarang agar Smart Rules & WhatsApp AI tetap aktif.';
+      'Akses trial Dowith.id besok habis. Perbarui ke paket Pro/Platinum untuk terus mencatat transaksi & fitur premium tetap aktif.';
 
-    this.logger.log(`Mengirim notifikasi H-1 ke user ${user.id}`);
+    this.logger.log(
+      `Mengirim notifikasi trial H-1 ke user ${user.id} (FREE)`,
+    );
 
+    await this.deliver(user, title, message, { type: 'TRIAL_H1', daysLeft: 1 });
+    await this.trackSent(user.id, now);
+  }
+
+  /**
+   * Notif reminder upgrade untuk PRO/PLATINUM di hari terakhir langganan
+   * (setelah jam 13:00). User sudah dalam status READ-ONLY.
+   */
+  private async sendPaidExpiryReminder(
+    user: {
+      id: string;
+      name: string;
+      plan: string;
+      whatsappNumber: string | null;
+      notifPrefs: {
+        lastNotifH1At: Date | null;
+        waEnabled: boolean;
+        pushEnabled: boolean;
+      } | null;
+    },
+    now: Date,
+  ) {
+    // Idempotensi 1x/hari
+    if (this.alreadySentToday(user.notifPrefs?.lastNotifH1At, now)) {
+      this.logger.debug(
+        `Reminder upgrade untuk user ${user.id} sudah dikirim hari ini. Skip.`,
+      );
+      return;
+    }
+
+    const planLabel = user.plan === 'PLATINUM' ? 'Platinum' : 'Pro';
+    const title = 'Langganan Habis Hari Ini!';
+    const message = `Langganan ${planLabel} Anda habis hari ini. Perbarui sekarang agar Smart Rules & WhatsApp AI tetap aktif.`;
+
+    this.logger.log(
+      `Mengirim reminder upgrade (hari terakhir jam ${EXPIRY_REMINDER_HOUR}.00) ke user ${user.id} (${user.plan})`,
+    );
+
+    await this.deliver(user, title, message, {
+      type: 'SUBSCRIPTION_EXPIRY_DAY',
+      plan: user.plan,
+    });
+    await this.trackSent(user.id, now);
+  }
+
+  /**
+   * Kirim notifikasi ke 3 kanal: in-app, web push, whatsapp.
+   */
+  private async deliver(
+    user: {
+      id: string;
+      whatsappNumber: string | null;
+      notifPrefs: {
+        waEnabled: boolean;
+        pushEnabled: boolean;
+      } | null;
+    },
+    title: string,
+    message: string,
+    data: Record<string, unknown>,
+  ) {
     // 1. In-app notification
     await this.notificationsService.create({
       userId: user.id,
       type: 'SYSTEM',
-      title: 'Langganan Habis Besok!',
+      title,
       message,
-      data: { type: 'SUBSCRIPTION_H1', daysLeft: 1, plan: user.plan },
+      data,
     });
 
     // 2. Web Push (jika aktif)
     if (user.notifPrefs?.pushEnabled) {
       await this.webPushService.sendToUser(user.id, {
-        title: 'Langganan Habis Besok!',
-        body: 'Perbarui sekarang agar Smart Rules & WhatsApp AI tetap aktif.',
+        title,
+        body: message,
         url: '/settings/subscription',
       });
     }
@@ -324,15 +374,19 @@ export class SubscriptionReminderService
     if (user.notifPrefs?.waEnabled && user.whatsappNumber) {
       await this.whatsappService.sendMessageToUser(
         user.id,
-        `⚠️ *LANGGANAN HABIS BESOK!*\n\n${message}`,
+        `⚠️ *${title}*\n\n${message}`,
       );
     }
+  }
 
-    // Tandai sudah dikirim (update timestamp)
+  /**
+   * Tandai notifikasi sudah terkirim hari ini (anti-duplikat).
+   */
+  private async trackSent(userId: string, now: Date) {
     await this.prisma.notificationPrefs.upsert({
-      where: { userId: user.id },
+      where: { userId },
       update: { lastNotifH1At: now },
-      create: { userId: user.id, lastNotifH1At: now },
+      create: { userId, lastNotifH1At: now },
     });
   }
 }

@@ -120,12 +120,37 @@
     const now = new Date();
     const trialEndsAt = user.trialEndsAt;
     const isTrialActive = user.plan === 'FREE' && trialEndsAt != null && trialEndsAt > now;
-    const subscriptionActive = user.subscriptionEndsAt != null && user.subscriptionEndsAt > now;
 
-    // User berbayar (PRO/PLATINUM) yang subscription-nya sudah expired => READ-ONLY
+    // PRO/PLATINUM wajib punya subscriptionEndsAt aktif. Jika null atau sudah lewat => expired.
     const isPaidPlan = user.plan === 'PRO' || user.plan === 'PLATINUM';
-    const subscriptionExpired = isPaidPlan && user.subscriptionEndsAt != null && user.subscriptionEndsAt <= now;
+    const hasActiveSubscription = isPaidPlan && user.subscriptionEndsAt != null && user.subscriptionEndsAt > now;
+    const subscriptionActive = hasActiveSubscription;
+    const subscriptionExpired = isPaidPlan && !hasActiveSubscription;
+
+    // Read-only jika: (FREE + trial habis) ATAU (PRO/PLATINUM + subscription expired/tidak ada)
     const isReadOnly = subscriptionExpired || (!isPaidPlan && !isTrialActive);
+
+    // Banner peringatan untuk frontend
+    let banner: { show: boolean; title: string; message: string; type: string } | null = null;
+    if (isReadOnly) {
+      if (isPaidPlan) {
+        // PRO/PLATINUM expired
+        banner = {
+          show: true,
+          title: 'Langganan Kedaluwarsa',
+          message: 'Paket Anda telah berakhir. Perbarui langganan untuk melanjutkan pencatatan transaksi.',
+          type: 'warning',
+        };
+      } else if (user.plan === 'FREE' && !isTrialActive) {
+        // FREE trial habis
+        banner = {
+          show: true,
+          title: 'Masa Trial Berakhir',
+          message: 'Masa trial gratis Anda telah berakhir. Upgrade ke Pro/Platinum untuk terus mencatat transaksi.',
+          type: 'warning',
+        };
+      }
+    }
 
     return {
       status: 'success',
@@ -136,7 +161,7 @@
           subscriptionActive,
           subscriptionExpired,
           daysLeft: user.subscriptionEndsAt
-            ? Math.max(0, Math.ceil((user.subscriptionEndsAt.getTime() - now.getTime()) / 86400000))
+            ? Math.ceil((user.subscriptionEndsAt.getTime() - now.getTime()) / 86400000)
             : null,
           isReadOnly,
         },
@@ -147,6 +172,7 @@
           daysLeft: trialEndsAt ? Math.max(0, Math.ceil((trialEndsAt.getTime() - now.getTime()) / 86400000)) : 0,
           subscriptionActive,
         },
+        banner,
       },
     };
   }
@@ -191,14 +217,32 @@
     return { status: 'success', message: 'Profil berhasil diperbarui', data: updatedUser };
   }
   async updatePlan(userId: string, plan: string, days?: number) {
-    // Jika plan FREE dan ada parameter `days`, perpanjang trialEndsAt dari hari ini
-    // (untuk keperluan testing/dev). Contoh: PATCH /users/dev-update-plan { plan:'FREE', days: 3 }
     const data: any = { plan: plan as any };
-    if (plan === 'FREE' && days && days > 0) {
-      const trialEndsAt = new Date();
-      trialEndsAt.setHours(trialEndsAt.getHours() + days * 24);
-      data.trialEndsAt = trialEndsAt;
+
+    if (plan === 'FREE') {
+      // FREE: set trialEndsAt jika ada parameter days, clear subscriptionEndsAt
+      data.subscriptionEndsAt = null;
+      if (days && days > 0) {
+        const trialEndsAt = new Date();
+        trialEndsAt.setHours(trialEndsAt.getHours() + days * 24);
+        data.trialEndsAt = trialEndsAt;
+      }
+    } else if (plan === 'PRO' || plan === 'PLATINUM') {
+      // PRO/PLATINUM: set subscriptionEndsAt
+      data.trialEndsAt = null;
+      if (days && days > 0) {
+        // Jika ada parameter days, hitung dari sekarang
+        const subscriptionEndsAt = new Date();
+        subscriptionEndsAt.setHours(subscriptionEndsAt.getHours() + days * 24);
+        data.subscriptionEndsAt = subscriptionEndsAt;
+      } else if (!days) {
+        // Default: 30 hari dari sekarang
+        const subscriptionEndsAt = new Date();
+        subscriptionEndsAt.setDate(subscriptionEndsAt.getDate() + 30);
+        data.subscriptionEndsAt = subscriptionEndsAt;
+      }
     }
+
     return await this.prisma.user.update({
       where: { id: userId },
       data,

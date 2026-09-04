@@ -1,9 +1,11 @@
 import { Controller, Get, Patch, Delete, Post, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
+import { SkipPlanStatus } from '../auth/decorators/skip-plan-status.decorator';
 
 @Controller('notifications')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PlanStatusGuard)
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
@@ -55,6 +57,7 @@ export class NotificationsController {
 
   // Endpoint khusus untuk test/dev supaya bisa isi notifikasi manual
   @Post('dev-create')
+  @SkipPlanStatus()
   async devCreate(@Req() req: any, @Body() body: { title: string; message: string; type?: any }) {
     const userId = this.extractUserId(req);
     return this.notificationsService.create({

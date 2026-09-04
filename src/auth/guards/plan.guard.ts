@@ -39,11 +39,11 @@ export class PlanGuard implements CanActivate {
     let activePlan = user.plan;
     const now = new Date();
 
-    // User PRO/PLATINUM dengan subscription expired => downgrade ke FREE
+    // User PRO/PLATINUM dengan subscription expired atau tanpa subscriptionEndsAt => downgrade ke FREE
     const isPaidPlan = user.plan === 'PRO' || user.plan === 'PLATINUM';
-    const subscriptionExpired = isPaidPlan && user.subscriptionEndsAt != null && user.subscriptionEndsAt <= now;
+    const hasActiveSubscription = isPaidPlan && user.subscriptionEndsAt != null && user.subscriptionEndsAt > now;
 
-    if (subscriptionExpired) {
+    if (isPaidPlan && !hasActiveSubscription) {
       activePlan = 'FREE';
     }
 

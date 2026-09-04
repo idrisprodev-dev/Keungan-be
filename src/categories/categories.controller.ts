@@ -5,8 +5,7 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
 
-// JwtAuthGuard: pastikan login. PlanStatusGuard: blokir mutasi (POST/PUT/DELETE)
-// saat user FREE (trial habis = read-only). GET tetap diizinkan.
+// JwtAuthGuard: pastikan login. PlanStatusGuard: blokir mutasi saat expired.
 @Controller('categories')
 @UseGuards(JwtAuthGuard, PlanStatusGuard)
 export class CategoriesController {

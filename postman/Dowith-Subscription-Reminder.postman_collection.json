@@ -1,0 +1,373 @@
+{
+  "info": {
+    "_postman_id": "8f3a1c2e-4d9b-4a10-9c7e-5b1d2e3f4a56",
+    "name": "Dowith.id - Subscription Reminder (DEV)",
+    "description": "Endpoint DEV untuk menguji fitur subscription reminder & read-only secara manual. Semua endpoint /dev/* otomatis mati di production (NODE_ENV=production).\n\nCARA PAKAI:\n1. Login ambil JWT (lihat request 'Login / Ambil Token'), isi variable `token`.\n2. Jalankan 'Set Plan' / 'Set Trial' sesuai skenario yang mau diuji.\n3. Jalankan 'Trigger Reminder' untuk mengeksekusi cron secara manual (tanpa nunggu tiap jam).\n4. Cek hasil di kolom 'Notification'.\n\nCATATAN JAM 13:00:\n- Reminder upgrade PRO/PLATINUM hanya terkirim jika `subscriptionEndsAt` JATUH HARI INI dan jam sudah >= 13:00 (waktu lokal server).\n- Jika jam server < 13:00 tapi mau langsung cek, set `subscriptionEndsAt` dengan `days: 0` (hari ini) lalu trigger saat jam >= 13:00.\n\nREAD-ONLY: setelah `subscriptionEndsAt <= now`, semua request mutasi (POST/PUT/DELETE) ditolak 403; GET tetap 200.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Auth - Login Google / Ambil Token",
+      "item": [
+        {
+          "name": "Login lewat Google (redirect)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/google",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "google"]
+            },
+            "description": "Buka di browser -> nanti redirect balik dengan token. Set variable `token` dari hasil login (di localStorage/cookie aplikasi)."
+          }
+        },
+        {
+          "name": "Cek Profil (validasi token & plan)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "me"]
+            },
+            "description": "Response berisi `plan`, `trial` dan `subscription` (subscriptionEndsAt, daysLeft, subscriptionExpired, isReadOnly). Gunakan ini untuk verifikasi state sebelum/sesudah set."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Set State User (PRO / PLATINUM)",
+      "item": [
+        {
+          "name": "PRO - expired (READ-ONLY) [days:-1]",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plan\": \"PRO\",\n  \"days\": -1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/dev/subscription",
+              "host": ["{{baseUrl}}"],
+              "path": ["dev", "subscription"]
+            },
+            "description": "subscriptionEndsAt = KEMARIN. User sudah expired -> READ-ONLY. Setelah trigger, tidak ada reminder (sudah lewat); tapi READ-ONLY aktif (mutasi 403)."
+          }
+        },
+        {
+          "name": "PRO - hari ini habis (reminder jam 13) [days:0]",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plan\": \"PRO\",\n  \"days\": 0\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/dev/subscription",
+              "host": ["{{baseUrl}}"],
+              "path": ["dev", "subscription"]
+            },
+            "description": "subscriptionEndsAt = SEKARANG (hari ini). Jika jam server >= 13:00, trigger akan mengirim reminder 'Langganan Habis Hari Ini!' + READ-ONLY aktif."
+          }
+        },
+        {
+          "name": "PRO - besok habis [days:1]",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plan\": \"PRO\",\n  \"days\": 1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/dev/subscription",
+              "host": ["{{baseUrl}}"],
+              "path": ["dev", "subscription"]
+            },
+            "description": "subscriptionEndsAt = BESOK. Belum hari terakhir, jadi belum ada reminder hari ini (tidak trigger). Berguna cek bahwa tidak ada notif prematur."
+          }
+        },
+        {
+          "name": "PLATINUM - hari ini habis [days:0]",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plan\": \"PLATINUM\",\n  \"days\": 0\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/dev/subscription",
+              "host": ["{{baseUrl}}"],
+              "path": ["dev", "subscription"]
+            },
+            "description": "Sama seperti PRO days:0 tapi untuk PLATINUM (mengecek teks dinamis 'Platinum')."
+          }
+        },
+        {
+          "name": "Reset - PRO tanpa subscription [no days]",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plan\": \"PRO\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/dev/subscription",
+              "host": ["{{baseUrl}}"],
+              "path": ["dev", "subscription"]
+            },
+            "description": "PRO tanpa subscriptionEndsAt (null). Digunakan untuk reset sebelum test ulang."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Set State User (FREE Trial)",
+      "item": [
+        {
+          "name": "FREE - trial habis besok (H-1) [days:1]",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"days\": 1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/dev/trial",
+              "host": ["{{baseUrl}}"],
+              "path": ["dev", "trial"]
+            },
+            "description": "plan=FREE, trialEndsAt=BESOK. Trigger akan mengirim notif trial H-1 'Akses Trial Habis Besok!'."
+          }
+        },
+        {
+          "name": "FREE - trial habis hari ini [days:0]",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"days\": 0\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/dev/trial",
+              "host": ["{{baseUrl}}"],
+              "path": ["dev", "trial"]
+            },
+            "description": "plan=FREE, trialEndsAt=SEKARANG. Trial habis -> READ-ONLY (mutasi 403). Tidak ada reminder (bukan H-1 lagi)."
+          }
+        },
+        {
+          "name": "FREE - trial sudah habis [days:-1]",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"days\": -1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/dev/trial",
+              "host": ["{{baseUrl}}"],
+              "path": ["dev", "trial"]
+            },
+            "description": "plan=FREE, trialEndsAt=KEMARIN. Trial habis -> READ-ONLY penuh."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Trigger Cron (manual)",
+      "item": [
+        {
+          "name": "Trigger Reminder Sekarang",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dev/trigger-subscription-reminder",
+              "host": ["{{baseUrl}}"],
+              "path": ["dev", "trigger-subscription-reminder"]
+            },
+            "description": "Menjalankan cron secara manual (tanpa menunggu tiap jam). Response berisi `result.processed`. Jalankan berkali-kali untuk cek idempotensi: panggilan kedua tidak mengirim notif ganda."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Verifikasi Notifikasi & READ-ONLY",
+      "item": [
+        {
+          "name": "Cek Notifikasi In-App",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications"]
+            },
+            "description": "Cek notif terbaru (title 'Langganan Habis Hari Ini!', 'Akses Trial Habis Besok!', dll)."
+          }
+        },
+        {
+          "name": "Uji READ-ONLY - POST transaksi (harus 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 10000,\n  \"description\": \"Test read-only\",\n  \"type\": \"EXPENSE\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions"]
+            },
+            "description": "Jika user READ-ONLY -> harapkan 403 'Akses ditolak: Langganan Anda telah kedaluwarsa...'"
+          }
+        },
+        {
+          "name": "Uji READ-ONLY - GET transaksi (harus 200)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions"]
+            },
+            "description": "Harus tetap 200 (baca data tetap diizinkan dalam mode READ-ONLY)."
+          }
+        }
+      ]
+    }
+  ]
+}

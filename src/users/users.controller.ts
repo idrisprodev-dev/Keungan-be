@@ -2,8 +2,11 @@ import { Controller, Get, Param, Patch, Post, Delete, Req, Body, UnauthorizedExc
 import { UsersService } from './users.service';
 import { PlanType } from '@prisma/client';
 import { AuthGuard } from '@nestjs/passport';
+import { SkipPlanStatus } from '../auth/decorators/skip-plan-status.decorator';
+import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
 
 @Controller('users')
+@UseGuards(PlanStatusGuard)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
@@ -26,6 +29,7 @@ export class UsersController {
   }
 
     @Patch('dev-update-plan')
+  @SkipPlanStatus()
   async updatePlan(@Req() req, @Body() body: { plan: string; days?: number }) {
     const userId = this.extractUserId(req);
     const targetPlan = body.plan as PlanType;
@@ -62,6 +66,7 @@ export class UsersController {
 
   @Patch('me')
   @UseGuards(AuthGuard('jwt'))
+  @SkipPlanStatus()
   async updateProfile(@Req() req, @Body() body: { firstName?: string; lastName?: string; name?: string }) {
     const userId = this.extractUserId(req);
     return this.usersService.updateProfile(userId, body);

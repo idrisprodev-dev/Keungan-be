@@ -1,65 +1,91 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SKIP_PLAN_STATUS_KEY } from '../decorators/skip-plan-status.decorator';
 
 /**
- * PlanStatusGuard — Memastikan hanya user dengan plan aktif yang boleh melakukan
- * operasi penulisan data (POST / PUT / DELETE / PATCH).
+ * PlanStatusGuard — Memblokir semua operasi tulis (POST/PUT/DELETE/PATCH)
+ * saat masa trial atau langganan user telah habis (READ-ONLY mode).
  *
- * Kondisi READ-ONLY (blokir semua mutating request):
- *   1. User FREE dengan trial sudah habis (logika lama).
- *   2. User PRO/PLATINUM dengan subscriptionEndsAt sudah lewat (expired).
- *
- * Method GET / OPTIONS / HEAD selalu diizinkan agar user tetap bisa
- * melihat riwayat data lama mereka (read-only mode).
+ * Dipasang di setiap controller secara eksplisit via @UseGuards().
+ * Route GET/OPTIONS/HEAD selalu diizinkan (read-only mode).
  */
 @Injectable()
 export class PlanStatusGuard implements CanActivate {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
-    const method = request.method;
+    // 1. Cek @SkipPlanStatus() — route ini dikecualikan
+    const skip = this.reflector.getAllAndOverride<boolean>(SKIP_PLAN_STATUS_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (skip) return true;
 
-    // Read-only selalu boleh, apa pun status paket user.
+    const req = context.switchToHttp().getRequest();
+    const method = req.method;
+
+    // 2. Method GET/OPTIONS/HEAD selalu boleh (read-only mode)
     if (method === 'GET' || method === 'OPTIONS' || method === 'HEAD') {
       return true;
     }
 
-    const userId = request.user?.id || request.user?.userId || request.user?.sub;
+    // 3. Ambil userId dari JWT payload
+    const userId = req.user?.id || req.user?.userId || req.user?.sub;
 
-    if (!userId) {
-      throw new ForbiddenException('Akses ditolak: User tidak ditemukan.');
-    }
+    // 4. Jika tidak ada userId (route publik tanpa JWT), skip
+    if (!userId) return true;
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    // 5. Ambil data user dari database
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, plan: true, subscriptionEndsAt: true, trialEndsAt: true },
+    });
 
     if (!user) {
       throw new ForbiddenException('Akses ditolak: Data user tidak terdaftar.');
     }
 
     const now = new Date();
+    const plan = user.plan;
+    const subEnd = user.subscriptionEndsAt;
+    const trialEnd = user.trialEndsAt;
 
-    // === KONDISI 1: User FREE dengan trial sudah habis ===
-    const trialActive = user.plan === 'FREE' && user.trialEndsAt != null && user.trialEndsAt > now;
-    const isHardFree = user.plan !== 'PRO' && user.plan !== 'PLATINUM' && !trialActive;
+    console.log(`[PlanStatusGuard] ${method} ${req.originalUrl} | plan=${plan} | subEnd=${subEnd} | trialEnd=${trialEnd} | now=${now.toISOString()}`);
 
-    if (isHardFree) {
-      throw new ForbiddenException(
-        'Akses ditolak: Masa trial atau langganan Anda telah berakhir. Upgrade ke Pro/Platinum untuk terus mencatat transaksi.',
-      );
+    // ============================================================
+    // KONDISI BLOCK (read-only):
+    //   A. User FREE + trial habis → BLOCK
+    //   B. User PRO/PLATINUM + (subscriptionEndsAt null ATAU sudah lewat) → BLOCK
+    // ============================================================
+
+    // --- KONDISI A: User FREE dengan trial sudah habis ---
+    if (plan !== 'PRO' && plan !== 'PLATINUM') {
+      const trialAktif = trialEnd != null && trialEnd.getTime() > now.getTime();
+      if (!trialAktif) {
+        console.log(`[PlanStatusGuard] → BLOCKED: FREE trial expired`);
+        throw new ForbiddenException(
+          'Akses ditolak: Masa trial atau langganan Anda telah berakhir. Upgrade ke Pro/Platinum untuk terus mencatat transaksi.',
+        );
+      }
+      // FREE dengan trial aktif → boleh lanjut
+      return true;
     }
 
-    // === KONDISI 2: User PRO/PLATINUM dengan subscription sudah expired ===
-    const isPaidPlan = user.plan === 'PRO' || user.plan === 'PLATINUM';
-    const subscriptionExpired = isPaidPlan && user.subscriptionEndsAt != null && user.subscriptionEndsAt <= now;
-
-    if (subscriptionExpired) {
+    // --- KONDISI B: User PRO atau PLATINUM ---
+    // PRO/PLATINUM HARUS punya subscriptionEndsAt yang masih aktif (masa depan)
+    if (subEnd == null || subEnd.getTime() <= now.getTime()) {
+      console.log(`[PlanStatusGuard] → BLOCKED: ${plan} subscription expired (subEnd=${subEnd})`);
       throw new ForbiddenException(
         'Akses ditolak: Langganan Anda telah kedaluwarsa. Perbarui langganan untuk melanjutkan pencatatan transaksi.',
       );
     }
 
+    // PRO/PLATINUM dengan subscription aktif → boleh lanjut
+    console.log(`[PlanStatusGuard] → PASSED: ${plan} subscription active until ${subEnd}`);
     return true;
   }
 }

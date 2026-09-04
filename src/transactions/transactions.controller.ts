@@ -6,8 +6,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PlanStatusGuard } from '../auth/guards/plan-status.guard';
 
 // JwtAuthGuard: pastikan user sudah login (token valid).
-// PlanStatusGuard: blokir POST/PUT/DELETE saat user FREE (trial/langganan habis),
-// tetapi tetap izinkan GET (read-only) agar riwayat data tetap terlihat.
+// PlanStatusGuard: blokir mutasi saat trial/subscription habis.
 @Controller('transactions')
 @UseGuards(JwtAuthGuard, PlanStatusGuard)
 export class TransactionsController {
