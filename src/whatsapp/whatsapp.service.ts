@@ -95,27 +95,38 @@
             const textLower = messageText.toLowerCase().trim();
 
             // ========================================================
-            // 🚫 READ-ONLY CHECK
-            // User PRO/PLATINUM dengan subscription expired TIDAK boleh
-            // melakukan operasi penulisan lewat WhatsApp (catat transaksi,
-            // undo). Hanya boleh baca (ping, saldo/laporan).
+            // 🔒 CEK STATUS Langganan / TRIAL
+            // Blokir akses jika trial sudah habis atau langganan expired
             // ========================================================
-            const nowReadonly = new Date();
-            const isPaidPlanWA =
-              user.plan === 'PRO' || user.plan === 'PLATINUM';
-            const subExpiredWA =
-              isPaidPlanWA &&
-              user.subscriptionEndsAt != null &&
-              user.subscriptionEndsAt <= nowReadonly;
+            const nowCheck = new Date();
+            const plan = user.plan;
+            const subEnd = user.subscriptionEndsAt;
+            const trialEnd = user.trialEndsAt;
 
-            const isWriteCommand =
-              textLower !== 'dowith ping' &&
-              textLower !== 'dowith saldo' &&
-              textLower !== 'dowith laporan';
+            let isExpired = false;
 
-            if (subExpiredWA && isWriteCommand) {
+            // Evaluasi status kedaluwarsa untuk FREE TRIAL
+            if (plan !== 'PRO' && plan !== 'PLATINUM') {
+              const trialAktif = trialEnd != null && trialEnd.getTime() > nowCheck.getTime();
+              if (!trialAktif) {
+                isExpired = true;
+              }
+            } 
+            // Evaluasi status kedaluwarsa untuk PRO / PLATINUM
+            else {
+              if (subEnd == null || subEnd.getTime() <= nowCheck.getTime()) {
+                isExpired = true;
+              }
+            }
+
+            // Jika sudah kedaluwarsa, blokir dan hentikan proses bot!
+            if (isExpired) {
+              const expiredMessage = plan === 'FREE' 
+                ? 'Masa trial 14 hari kamu sudah berakhir.' 
+                : `Langganan ${plan} kamu sudah berakhir.`;
+
               await this.sock.sendMessage(senderID, {
-                text: `❌ *Akses Ditolak*\n\nHalo ${user.name}, langganan Dowith.id kamu sudah berakhir. Perbarui langgananmu untuk kembali mencatat transaksi. Data lama tetap bisa kamu lihat via aplikasi.`,
+                text: `❌ *Akses Ditolak*\n\nHalo ${user.name || 'pengguna'}, ${expiredMessage} Perbarui langgananmu untuk kembali mencatat transaksi. Data lama tetap bisa kamu lihat via aplikasi.`,
               });
               return;
             }

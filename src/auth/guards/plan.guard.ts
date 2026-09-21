@@ -27,6 +27,26 @@ export class PlanGuard implements CanActivate {
       throw new ForbiddenException('Akses ditolak: Data user tidak terdaftar.');
     }
 
+    // ========================================================
+    // 🔒 PROTEksi PAKSA: Tolak operasi modifikasi jika akun expired
+    // Hanya izinkan GET (read-only) jika masa aktif habis
+    // ========================================================
+    const isGetRequest = request.method === 'GET';
+    const now = new Date();
+
+    const isPaidPlan = user.plan === 'PRO' || user.plan === 'PLATINUM';
+    const hasActiveSubscription = isPaidPlan && user.subscriptionEndsAt != null && user.subscriptionEndsAt > now;
+    const isTrialActive = user.trialEndsAt && user.trialEndsAt > now;
+
+    // User dianggap expired jika:
+    // 1. User FREE tanpa trial aktif, ATAU
+    // 2. User PRO/PLATINUM tanpa subscription aktif
+    const isExpired = (!isPaidPlan && !isTrialActive) || (isPaidPlan && !hasActiveSubscription);
+
+    if (isExpired && !isGetRequest) {
+      throw new ForbiddenException('Masa aktif habis. Aplikasi dalam mode Read-Only.');
+    }
+
     const planHierarchy = { FREE: 1, PRO: 2, PLATINUM: 3 };
 
     // ========================================================
@@ -37,19 +57,13 @@ export class PlanGuard implements CanActivate {
     // - Jika trial habis DAN tidak punya plan berbayar, turunkan ke FREE.
     // ========================================================
     let activePlan = user.plan;
-    const now = new Date();
-
-    // User PRO/PLATINUM dengan subscription expired atau tanpa subscriptionEndsAt => downgrade ke FREE
-    const isPaidPlan = user.plan === 'PRO' || user.plan === 'PLATINUM';
-    const hasActiveSubscription = isPaidPlan && user.subscriptionEndsAt != null && user.subscriptionEndsAt > now;
 
     if (isPaidPlan && !hasActiveSubscription) {
       activePlan = 'FREE';
     }
 
     if (activePlan === 'FREE') {
-      const trialActive = user.trialEndsAt && user.trialEndsAt > now;
-      if (trialActive) {
+      if (isTrialActive) {
         activePlan = 'PRO'; // Trial aktif -> fitur PRO dibuka
       }
     }
